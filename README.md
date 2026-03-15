@@ -1,15 +1,33 @@
 # 🦛 Hippo
 
-**Every AI memory tool remembers everything. The brain doesn't. That's why it works.**
+**The secret to good memory isn't remembering more. It's knowing what to forget.**
 
 [![npm](https://img.shields.io/npm/v/hippo-memory)](https://npmjs.com/package/hippo-memory)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+
+```
+Works with:  Claude Code, Codex, Cursor, OpenClaw, any CLI agent
+Imports from: ChatGPT, Claude (CLAUDE.md), Cursor (.cursorrules), any markdown
+Storage:     Markdown + YAML frontmatter. No database. Git-trackable.
+Dependencies: Zero runtime deps. Optional embeddings via @xenova/transformers.
+```
 
 ---
 
 ## The Problem
 
 AI agents forget everything between sessions. Existing solutions just save everything and search later. That's a filing cabinet, not a brain.
+
+Your memories are also trapped. ChatGPT knows things Claude doesn't. Cursor rules don't travel to Codex. Switch tools and you start from zero.
+
+---
+
+## Who Is This For
+
+- **Multi-tool developers.** You use Claude Code on Monday, Cursor on Tuesday, Codex on Wednesday. Context doesn't carry over. Hippo is the shared memory layer across all of them.
+- **Teams where agents repeat mistakes.** The agent hit the same deployment bug last week. And the week before. Hippo's error memories and decay mechanics mean hard lessons stick and noise fades.
+- **Anyone whose CLAUDE.md is a mess.** Your instruction file grew to 400 lines of mixed rules, preferences, and stale workarounds. Hippo gives that structure: tags, confidence levels, automatic decay of outdated info.
+- **People who want portable AI memory.** No vendor lock-in. Markdown files in your repo. Import from ChatGPT, Claude, Cursor. Export by copying a folder.
 
 ---
 
@@ -24,6 +42,46 @@ hippo recall "data pipeline issues" --budget 2000
 ```
 
 That's it. You have a memory system.
+
+---
+
+## Cross-Tool Import
+
+Your memories shouldn't be locked inside one tool. Hippo pulls them in from anywhere.
+
+```bash
+# ChatGPT memory export
+hippo import --chatgpt memories.json
+
+# Claude's CLAUDE.md (skips existing hippo hook blocks)
+hippo import --claude CLAUDE.md
+
+# Cursor rules
+hippo import --cursor .cursorrules
+
+# Any markdown file (headings become tags)
+hippo import --markdown MEMORY.md
+
+# Any text file
+hippo import --file notes.txt
+```
+
+All import commands support `--dry-run` (preview without writing), `--global` (write to `~/.hippo/`), and `--tag` (add extra tags). Duplicates are detected and skipped automatically.
+
+### Conversation Capture
+
+Extract memories from raw conversation text. No LLM needed: pattern-based heuristics find decisions, rules, errors, and preferences.
+
+```bash
+# Pipe a conversation in
+cat session.log | hippo capture --stdin
+
+# Or point at a file
+hippo capture --file conversation.md
+
+# Preview first
+hippo capture --file conversation.md --dry-run
+```
 
 ---
 
@@ -108,6 +166,49 @@ hippo remember "deployment failed: forgot to run migrations" --error
 
 ---
 
+### Confidence tiers
+
+Every memory carries a confidence level: `verified`, `observed`, `inferred`, or `stale`. This tells agents how much to trust what they're reading.
+
+```bash
+hippo remember "API rate limit is 100/min" --verified
+hippo remember "deploy usually takes ~3 min" --observed
+hippo remember "the flaky test might be a race condition" --inferred
+```
+
+When context is generated, confidence is shown inline:
+
+```
+[verified] API rate limit is 100/min per the docs
+[observed] Deploy usually takes ~3 min
+[inferred] ⚠️ The flaky test might be a race condition
+```
+
+Agents can see at a glance what's established fact vs. a pattern worth questioning.
+
+Memories unretrieved for 30+ days are automatically marked `stale` during the next `hippo sleep`.
+
+---
+
+### Observation framing
+
+Memories aren't presented as bare assertions. By default, Hippo frames them as observations with dates, so agents treat them as context rather than commands.
+
+```bash
+hippo context --framing observe   # default
+# Output: "Previously observed (2026-03-10): deploy takes ~3 min"
+
+hippo context --framing suggest
+# Output: "Consider: deploy takes ~3 min"
+
+hippo context --framing assert
+# Output: "Deploy takes ~3 min"
+```
+
+Three modes: `observe` (default), `suggest`, `assert`. Choose based on how directive you want the memory to be.
+
+---
+
 ### Sleep consolidation
 
 Run `hippo sleep` and episodes compress into patterns.
@@ -172,19 +273,33 @@ Results are ranked by `relevance * strength * recency`. The highest-signal memor
 | Command | What it does |
 |---------|-------------|
 | `hippo init` | Create `.hippo/` in current directory |
+| `hippo init --global` | Create global store at `~/.hippo/` |
 | `hippo remember "<text>"` | Store a memory |
 | `hippo remember "<text>" --tag <t>` | Store with tag (repeatable) |
 | `hippo remember "<text>" --error` | Store as error (2x half-life) |
 | `hippo remember "<text>" --pin` | Store with no decay |
-| `hippo recall "<query>"` | Retrieve relevant memories |
+| `hippo remember "<text>" --verified` | Set confidence: verified (default) |
+| `hippo remember "<text>" --observed` | Set confidence: observed |
+| `hippo remember "<text>" --inferred` | Set confidence: inferred |
+| `hippo remember "<text>" --global` | Store in global `~/.hippo/` store |
+| `hippo recall "<query>"` | Retrieve relevant memories (local + global) |
 | `hippo recall "<query>" --budget <n>` | Recall within token limit (default: 4000) |
 | `hippo recall "<query>" --json` | Output as JSON |
 | `hippo context --auto` | Smart context injection (auto-detects task from git) |
 | `hippo context "<query>" --budget <n>` | Context injection with explicit query (default: 1500) |
 | `hippo context --budget 0` | Skip entirely (zero token cost) |
-| `hippo hook list` | Show available framework hooks |
-| `hippo hook install <target>` | Install hook (claude-code, codex, cursor, openclaw) |
-| `hippo hook uninstall <target>` | Remove hook |
+| `hippo context --framing <mode>` | Framing: observe (default), suggest, assert |
+| `hippo context --format <fmt>` | Output format: markdown (default) or json |
+| `hippo import --chatgpt <path>` | Import from ChatGPT memory export (JSON or txt) |
+| `hippo import --claude <path>` | Import from CLAUDE.md or Claude memory.json |
+| `hippo import --cursor <path>` | Import from .cursorrules or .cursor/rules |
+| `hippo import --markdown <path>` | Import from structured markdown (headings → tags) |
+| `hippo import --file <path>` | Import from any text file |
+| `hippo import --dry-run` | Preview import without writing |
+| `hippo import --global` | Write imported memories to `~/.hippo/` |
+| `hippo capture --stdin` | Extract memories from piped conversation text |
+| `hippo capture --file <path>` | Extract memories from a file |
+| `hippo capture --dry-run` | Preview extraction without writing |
 | `hippo sleep` | Run consolidation (decay + merge + compress) |
 | `hippo sleep --dry-run` | Preview consolidation without writing |
 | `hippo status` | Memory health: counts, strengths, last sleep |
@@ -193,6 +308,16 @@ Results are ranked by `relevance * strength * recency`. The highest-signal memor
 | `hippo outcome --id <id> --good` | Target a specific memory |
 | `hippo inspect <id>` | Full detail on one memory |
 | `hippo forget <id>` | Force remove a memory |
+| `hippo embed` | Embed all memories for semantic search |
+| `hippo embed --status` | Show embedding coverage |
+| `hippo watch "<command>"` | Run command, auto-learn from failures |
+| `hippo learn --git` | Scan recent git commits for lessons |
+| `hippo learn --git --days <n>` | Scan N days back (default: 7) |
+| `hippo promote <id>` | Copy a local memory to the global store |
+| `hippo sync` | Pull global memories into local project |
+| `hippo hook list` | Show available framework hooks |
+| `hippo hook install <target>` | Install hook (claude-code, codex, cursor, openclaw) |
+| `hippo hook uninstall <target>` | Remove hook |
 
 ---
 
@@ -281,11 +406,14 @@ For how these mechanisms connect to LLM training, continual learning, and open r
 | Decay by default | ✅ | ❌ | ❌ | ❌ |
 | Retrieval strengthening | ✅ | ❌ | ❌ | ❌ |
 | Outcome tracking | ✅ | ❌ | ❌ | ❌ |
+| Confidence tiers | ✅ | ❌ | ❌ | ❌ |
+| Cross-tool import | ✅ | ❌ | ❌ | ❌ |
+| Conversation capture | ✅ | ❌ | ❌ | ❌ |
 | Zero dependencies | ✅ | ❌ | ❌ | ❌ |
 | Git-friendly | ✅ | ❌ | ✅ | ❌ |
 | Framework agnostic | ✅ | Partial | ✅ | ❌ |
 
-Mem0, Basic Memory, and Claude-Mem all implement "save everything, search later." Hippo is the only one that models what memories are worth keeping.
+Mem0, Basic Memory, and Claude-Mem all implement "save everything, search later." Hippo is the only one that models what memories are worth keeping, and the only one that lets you bring memories from other tools.
 
 ---
 
