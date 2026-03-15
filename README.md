@@ -375,6 +375,7 @@ hippo watch "npm run build"
 | `hippo hook list` | Show available framework hooks |
 | `hippo hook install <target>` | Install hook (claude-code, codex, cursor, openclaw) |
 | `hippo hook uninstall <target>` | Remove hook |
+| `hippo mcp` | Start MCP server (stdio transport) |
 
 ---
 
@@ -426,26 +427,36 @@ After completing work successfully:
 hippo outcome --good
 ```
 
-### Generic / MCP
+### MCP Server
 
-For any agent that can run shell commands:
+For any MCP-compatible client (Cursor, Windsurf, Cline, Claude Desktop):
+
+```bash
+hippo mcp   # starts MCP server over stdio
+```
+
+Add to your MCP config (e.g. `.cursor/mcp.json` or `claude_desktop_config.json`):
 
 ```json
 {
-  "tools": [
-    {
-      "name": "memory_context",
-      "description": "Load relevant project memory for the current task",
-      "command": "hippo context --auto --budget 1500"
-    },
-    {
-      "name": "memory_store",
-      "description": "Store a new memory",
-      "command": "hippo remember {text} --error"
+  "mcpServers": {
+    "hippo-memory": {
+      "command": "hippo",
+      "args": ["mcp"]
     }
-  ]
+  }
 }
 ```
+
+Exposes 6 tools: `hippo_recall`, `hippo_remember`, `hippo_outcome`, `hippo_context`, `hippo_status`, `hippo_learn`.
+
+### OpenClaw Plugin
+
+Native plugin with auto-context injection at session start. See [extensions/openclaw-plugin/](extensions/openclaw-plugin/).
+
+### Claude Code Plugin
+
+Plugin with SessionStart/Stop hooks and error auto-capture. See [extensions/claude-code-plugin/](extensions/claude-code-plugin/).
 
 Full integration details: [integrations/](integrations/)
 
@@ -482,6 +493,8 @@ For how these mechanisms connect to LLM training, continual learning, and open r
 | Cross-tool import | Yes | No | No | No |
 | Conversation capture | Yes | No | No | No |
 | Auto-hook install | Yes | No | No | No |
+| MCP server | Yes | No | No | No |
+| Native plugins | OpenClaw + Claude Code | No | No | No |
 | Multi-repo git learn | Yes | No | No | No |
 | Zero dependencies | Yes | No | No | No |
 | Git-friendly | Yes | No | Yes | No |

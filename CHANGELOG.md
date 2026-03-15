@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 (2026-03-15)
+
+### Added
+- `hippo mcp` command: MCP server over stdio transport. Works with Cursor, Windsurf, Cline, Claude Desktop, and any MCP-compatible client.
+- MCP server exposes 6 tools: hippo_recall, hippo_remember, hippo_outcome, hippo_context, hippo_status, hippo_learn.
+
 ## 0.4.0 (2026-03-15)
 
 ### Added

@@ -1304,6 +1304,7 @@ Commands:
     hook list              Show available hooks
     hook install <target>  Install hook (claude-code|codex|cursor|openclaw)
     hook uninstall <target> Remove hook
+  mcp                      Start MCP server (stdio transport)
 
 Examples:
   hippo init
@@ -1448,6 +1449,13 @@ async function main(): Promise<void> {
       });
       break;
     }
+
+    case 'mcp':
+      // Start MCP server over stdio - dynamically import to keep main CLI lean
+      await import('./mcp/server.js');
+      // Server runs until stdin closes, so we never reach here
+      await new Promise(() => {}); // hang forever
+      break;
 
     case 'help':
     case '--help':
