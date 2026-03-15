@@ -1,0 +1,46 @@
+{
+  "id": "hippo-memory",
+  "name": "Hippo Memory",
+  "description": "Biologically-inspired memory for AI agents. Decay by default, retrieval strengthening, sleep consolidation.",
+  "version": "0.4.0",
+
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "budget": {
+        "type": "number",
+        "description": "Default token budget for context injection (default: 1500)"
+      },
+      "autoContext": {
+        "type": "boolean",
+        "description": "Auto-inject hippo context at session start (default: true)"
+      },
+      "autoLearn": {
+        "type": "boolean",
+        "description": "Auto-capture errors during agent sessions (default: true)"
+      },
+      "autoSleep": {
+        "type": "boolean",
+        "description": "Run consolidation after sessions with 10+ new memories (default: false)"
+      },
+      "framing": {
+        "type": "string",
+        "enum": ["observe", "suggest", "assert"],
+        "description": "How memories are framed in context (default: observe)"
+      },
+      "root": {
+        "type": "string",
+        "description": "Custom .hippo directory path (default: auto-detect from workspace)"
+      }
+    }
+  },
+  "uiHints": {
+    "budget": { "label": "Token Budget", "placeholder": "1500" },
+    "autoContext": { "label": "Auto-inject Context" },
+    "autoLearn": { "label": "Auto-capture Errors" },
+    "autoSleep": { "label": "Auto-consolidate" },
+    "framing": { "label": "Memory Framing" },
+    "root": { "label": "Hippo Root Path", "placeholder": ".hippo/" }
+  }
+}
