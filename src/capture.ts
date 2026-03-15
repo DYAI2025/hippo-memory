@@ -61,8 +61,8 @@ const PREFERENCE_PATTERNS = [
 
 // Heading patterns that signal a following list of specs/requirements
 const SPEC_HEADING_PATTERNS = [
-  /^#+\s*(?:features?|requirements?|specs?|specifications?|plan|design|architecture|interface|api|todo|tasks?|implementation|notes?)(?:\s|:)/i,
-  /^(?:features?|requirements?|specs?|specifications?|plan|design|tasks?|implementation)(?:\s*:)/i,
+  /^#+\s*(?:features?|requirements?|specs?|specifications?|plan|design|architecture|interface|api|todo|tasks?|implementation|notes?)(?:\s|:|$)/i,
+  /^(?:features?|requirements?|specs?|specifications?|plan|design|tasks?|implementation)(?:\s*:|$)/i,
 ];
 
 // ---------------------------------------------------------------------------

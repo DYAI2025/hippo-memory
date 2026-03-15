@@ -73,6 +73,7 @@ import {
   importMarkdown,
   ImportOptions,
 } from './importers.js';
+import { cmdCapture, CaptureOptions } from './capture.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1325,30 +1326,9 @@ async function main(): Promise<void> {
       cmdSync(hippoRoot);
       break;
 
-    case 'import': {
-      // Determine format and file path from flags
-      let importFormat: ImportOptions['format'] | null = null;
-      let importFile = '';
-
-      if (flags['chatgpt']) { importFormat = 'chatgpt'; importFile = String(flags['chatgpt']); }
-      else if (flags['claude']) { importFormat = 'claude'; importFile = String(flags['claude']); }
-      else if (flags['cursor']) { importFormat = 'cursor'; importFile = String(flags['cursor']); }
-      else if (flags['markdown']) { importFormat = 'markdown'; importFile = String(flags['markdown']); }
-      else if (flags['file']) { importFormat = 'file'; importFile = String(flags['file']); }
-
-      if (!importFormat || !importFile) {
-        console.error('Usage: hippo import --chatgpt|--claude|--cursor|--file|--markdown <path> [--dry-run] [--global]');
-        process.exit(1);
-      }
-
-      cmdImport(hippoRoot, {
-        format: importFormat,
-        filePath: importFile,
-        dryRun: Boolean(flags['dry-run']),
-        global: Boolean(flags['global']),
-      });
+    case 'import':
+      cmdImport(hippoRoot, args, flags);
       break;
-    }
 
     case 'capture': {
       let captureSource: CaptureOptions['source'] | null = null;
