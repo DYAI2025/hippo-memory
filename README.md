@@ -270,6 +270,8 @@ Hippo is modeled on seven properties of the human hippocampus. Not metaphoricall
 
 The 7 mechanisms in full: [PLAN.md#core-principles](PLAN.md#core-principles)
 
+For how these mechanisms connect to LLM training, continual learning, and open research problems: **[RESEARCH.md](RESEARCH.md)**
+
 ---
 
 ## Comparison

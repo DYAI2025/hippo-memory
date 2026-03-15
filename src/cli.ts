@@ -15,7 +15,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import {
   createMemory,
   calculateStrength,
@@ -38,6 +38,16 @@ import {
 } from './store.js';
 import { search, markRetrieved, estimateTokens } from './search.js';
 import { consolidate } from './consolidate.js';
+import { captureError, extractLessons, deduplicateLesson } from './autolearn.js';
+import {
+  getGlobalRoot,
+  initGlobal,
+  promoteToGlobal,
+  searchBoth,
+  syncGlobalToLocal,
+} from './shared.js';
+import { isEmbeddingAvailable, embedAll, loadEmbeddingIndex } from './embeddings.js';
+import { loadConfig } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -96,7 +106,18 @@ function fmt(n: number, digits = 2): string {
 // Commands
 // ---------------------------------------------------------------------------
 
-function cmdInit(hippoRoot: string): void {
+function cmdInit(hippoRoot: string, flags: Record<string, string | boolean | string[]>): void {
+  if (flags['global']) {
+    const globalRoot = getGlobalRoot();
+    if (isInitialized(globalRoot)) {
+      console.log('✅ Global store already initialized at', globalRoot);
+    } else {
+      initGlobal();
+      console.log('🌐 Initialized global Hippo store at', globalRoot);
+    }
+    return;
+  }
+
   if (isInitialized(hippoRoot)) {
     console.log('✅ Already initialized at', hippoRoot);
     return;
@@ -112,7 +133,14 @@ function cmdRemember(
   text: string,
   flags: Record<string, string | boolean | string[]>
 ): void {
-  requireInit(hippoRoot);
+  const useGlobal = Boolean(flags['global']);
+  const targetRoot = useGlobal ? getGlobalRoot() : hippoRoot;
+
+  if (useGlobal) {
+    if (!isInitialized(targetRoot)) initGlobal();
+  } else {
+    requireInit(hippoRoot);
+  }
 
   const rawTags: string[] = Array.isArray(flags['tag']) ? flags['tag'] as string[] : [];
   if (flags['error']) rawTags.push('error');
@@ -124,13 +152,21 @@ function cmdRemember(
     source: 'cli',
   });
 
-  writeEntry(hippoRoot, entry);
-  updateStats(hippoRoot, { remembered: 1 });
+  writeEntry(targetRoot, entry);
+  updateStats(targetRoot, { remembered: 1 });
 
-  console.log(`✅ Remembered [${entry.id}]`);
+  console.log(`${useGlobal ? '🌐' : '✅'} Remembered [${entry.id}]${useGlobal ? ' (global)' : ''}`);
   console.log(`   Layer: ${entry.layer} | Strength: ${fmt(entry.strength)} | Half-life: ${entry.half_life_days}d`);
   if (entry.tags.length > 0) console.log(`   Tags: ${entry.tags.join(', ')}`);
   if (entry.pinned) console.log('   📌 Pinned (no decay)');
+
+  // Auto-embed if available (fire and forget)
+  const config = isInitialized(targetRoot) ? loadConfig(targetRoot) : null;
+  if (config?.embeddings?.enabled) {
+    import('./embeddings.js').then(({ embedMemory }) => {
+      embedMemory(targetRoot, entry).catch(() => { /* silent */ });
+    }).catch(() => { /* silent */ });
+  }
 }
 
 function cmdRecall(
@@ -142,9 +178,11 @@ function cmdRecall(
 
   const budget = parseInt(String(flags['budget'] ?? '4000'), 10);
   const asJson = Boolean(flags['json']);
+  const globalRoot = getGlobalRoot();
 
-  const entries = loadAllEntries(hippoRoot);
-  const results = search(query, entries, { budget });
+  // Search local + global (if global store exists)
+  const rawResults = searchBoth(query, hippoRoot, globalRoot, { budget });
+  const results = rawResults as Array<typeof rawResults[0] & { isGlobal?: boolean }>;
 
   if (results.length === 0) {
     if (asJson) {
@@ -155,13 +193,11 @@ function cmdRecall(
     return;
   }
 
-  // Update retrieval metadata and persist
-  const updated = markRetrieved(results.map((r) => r.entry));
-  for (const u of updated) {
-    writeEntry(hippoRoot, u);
-  }
+  // Update retrieval metadata and persist (local entries only)
+  const localEntries = results.filter((r) => !r.isGlobal).map((r) => r.entry);
+  const updated = markRetrieved(localEntries);
+  for (const u of updated) writeEntry(hippoRoot, u);
 
-  // Track last retrieval IDs for outcome command
   const index = loadIndex(hippoRoot);
   index.last_retrieval_ids = updated.map((u) => u.id);
   saveIndex(hippoRoot, index);
@@ -176,6 +212,7 @@ function cmdRecall(
       tokens: r.tokens,
       tags: r.entry.tags,
       content: r.entry.content,
+      global: Boolean(r.isGlobal),
     }));
     console.log(JSON.stringify({ query, budget, results: output, total: output.length }));
     return;
@@ -186,8 +223,10 @@ function cmdRecall(
 
   for (const r of results) {
     const e = r.entry;
+    const isGlobal = Boolean(r.isGlobal);
     const strengthBar = '█'.repeat(Math.round(e.strength * 10)) + '░'.repeat(10 - Math.round(e.strength * 10));
-    console.log(`━━━ ${e.id} [${e.layer}] score=${fmt(r.score, 3)} strength=${fmt(e.strength)}`);
+    const prefix = isGlobal ? '[global] ' : '';
+    console.log(`━━━ ${prefix}${e.id} [${e.layer}] score=${fmt(r.score, 3)} strength=${fmt(e.strength)}`);
     console.log(`    [${strengthBar}] tags: ${e.tags.join(', ') || 'none'} | retrieved: ${e.retrieval_count}x`);
     console.log();
     console.log(e.content);
@@ -473,7 +512,7 @@ function cmdContext(
 }
 
 function printContextMarkdown(
-  items: Array<{ entry: MemoryEntry; score: number; tokens: number }>,
+  items: Array<{ entry: MemoryEntry; score: number; tokens: number; isGlobal?: boolean }>,
   totalTokens: number
 ): void {
   console.log(`## Project Memory (${items.length} entries, ${totalTokens} tokens)\n`);
@@ -481,7 +520,8 @@ function printContextMarkdown(
     const e = item.entry;
     const tagStr = e.tags.length > 0 ? ` [${e.tags.join(', ')}]` : '';
     const strengthPct = Math.round(calculateStrength(e) * 100);
-    console.log(`- **${e.content}**${tagStr} (${strengthPct}%)`);
+    const globalPrefix = item.isGlobal ? '[global] ' : '';
+    console.log(`- **${globalPrefix}${e.content}**${tagStr} (${strengthPct}%)`);
   }
 }
 
