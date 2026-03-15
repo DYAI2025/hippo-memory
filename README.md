@@ -58,7 +58,9 @@ hippo init
 
 If you have a `CLAUDE.md`, it patches it. `AGENTS.md` for Codex/OpenClaw. `.cursorrules` for Cursor. No manual `hook install` needed. Your agent starts using Hippo on its next session.
 
-To skip auto-detection: `hippo init --no-hooks`
+It also sets up a daily cron job (6:15am) that runs `hippo learn --git` and `hippo sleep` automatically. Memories get captured from your commits and consolidated every day without you thinking about it.
+
+To skip: `hippo init --no-hooks --no-schedule`
 
 ---
 

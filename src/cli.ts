@@ -158,6 +158,11 @@ function cmdInit(hippoRoot: string, flags: Record<string, string | boolean | str
   if (!flags['no-hooks']) {
     autoInstallHooks(alreadyExists);
   }
+
+  // Auto-setup daily schedule (unless --no-schedule)
+  if (!flags['no-schedule'] && !flags['global']) {
+    setupDailySchedule(hippoRoot);
+  }
 }
 
 /**
@@ -212,6 +217,61 @@ function autoInstallHooks(quiet: boolean): void {
 
     installed.add(targetPath);
     console.log(`   Auto-installed ${hook} hook in ${hookDef.file}`);
+  }
+}
+
+/**
+ * Set up a daily cron job for hippo learn + sleep.
+ * Linux/macOS: writes to user crontab.
+ * Windows: creates a scheduled task.
+ * Skips if already installed.
+ */
+function setupDailySchedule(hippoRoot: string): void {
+  const projectDir = path.dirname(hippoRoot);
+  const isWindows = process.platform === 'win32';
+  const taskName = `hippo-daily-${path.basename(projectDir)}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+
+  if (isWindows) {
+    // Check if task already exists
+    try {
+      const existing = execSync(`schtasks /query /tn "${taskName}" 2>nul`, { encoding: 'utf-8' });
+      if (existing.includes(taskName)) {
+        return; // already scheduled
+      }
+    } catch {
+      // Task doesn't exist, create it
+    }
+
+    const cmd = `cd /d "${projectDir}" && hippo learn --git --days 1 && hippo sleep`;
+    try {
+      execSync(
+        `schtasks /create /tn "${taskName}" /tr "cmd /c ${cmd.replace(/"/g, '\\"')}" /sc daily /st 06:15 /f`,
+        { stdio: 'pipe' }
+      );
+      console.log(`   Scheduled daily learn+sleep (6:15am) via Task Scheduler: ${taskName}`);
+    } catch {
+      // No admin rights or schtasks unavailable, fall back to printing instructions
+      console.log(`   To schedule daily learn+sleep, run:`);
+      console.log(`   schtasks /create /tn "${taskName}" /tr "cmd /c ${cmd}" /sc daily /st 06:15`);
+    }
+  } else {
+    // Unix: check crontab for existing entry
+    const marker = `# hippo:${taskName}`;
+    try {
+      const existing = execSync('crontab -l 2>/dev/null', { encoding: 'utf-8' });
+      if (existing.includes(marker)) {
+        return; // already scheduled
+      }
+
+      const cronLine = `15 6 * * * cd "${projectDir}" && hippo learn --git --days 1 && hippo sleep ${marker}`;
+      const newCrontab = existing.trimEnd() + '\n' + cronLine + '\n';
+      execSync('crontab -', { input: newCrontab, stdio: ['pipe', 'pipe', 'pipe'] });
+      console.log(`   Scheduled daily learn+sleep (6:15am) via crontab`);
+    } catch {
+      const cronLine = `15 6 * * * cd "${projectDir}" && hippo learn --git --days 1 && hippo sleep`;
+      console.log(`   To schedule daily learn+sleep, add to crontab (crontab -e):`);
+      console.log(`   ${cronLine}`);
+    }
   }
 }
 
@@ -1251,6 +1311,7 @@ Commands:
   init                     Create .hippo/ structure in current directory
     --global               Init the global store at ~/.hippo/
     --no-hooks             Skip auto-detecting and installing agent hooks
+    --no-schedule          Skip auto-creating daily learn+sleep cron job
   remember <text>          Store a memory
     --tag <tag>            Add a tag (repeatable)
     --error                Tag as error (boosts retention)

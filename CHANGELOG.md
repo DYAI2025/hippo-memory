@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1 (2026-03-15)
+
+### Added
+- `hippo init` now auto-creates a daily cron job (6:15am) for `hippo learn --git --days 1 && hippo sleep`. Cross-platform: crontab on Linux/macOS, Task Scheduler on Windows. Use `--no-schedule` to skip.
+
 ## 0.5.0 (2026-03-15)
 
 ### Added
