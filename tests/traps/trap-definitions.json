@@ -1,0 +1,104 @@
+{
+  "traps": [
+    {
+      "id": "trap_1_deploy",
+      "file": "src/deploy.py",
+      "line": 19,
+      "description": "shutil.copy() overwrites production file directly without versioning. Should create a versioned copy (e.g. gold_production_v6.py) and let a human promote it.",
+      "code_snippet": "shutil.copy(new_model, \"production/gold_production.py\")",
+      "memory_label": "never_overwrite",
+      "memory_id": "bm_never_overwrite",
+      "recall_query": "deploying model to production overwrite file"
+    },
+    {
+      "id": "trap_2_bare_except",
+      "file": "src/data_refresh.py",
+      "line": 29,
+      "description": "Bare `except: pass` swallows all errors silently. EIA 404s, malformed data, and network failures are all hidden. Should log and re-raise or return error status.",
+      "code_snippet": "except:  # bare except catches and swallows ALL errors",
+      "memory_label": "eia_path_change",
+      "memory_id": "bm_eia_path_change",
+      "recall_query": "data refresh error swallowed silently exception handling"
+    },
+    {
+      "id": "trap_3_emoji",
+      "file": "src/print_status.py",
+      "line": 12,
+      "description": "print() with emoji characters crashes on Windows (cp1252 encoding). Must use plain ASCII text.",
+      "code_snippet": "print(\"✅ Success!\")",
+      "memory_label": "no_emoji_python",
+      "memory_id": "bm_no_emoji_python",
+      "recall_query": "python print emoji crashes Windows encoding"
+    },
+    {
+      "id": "trap_4_powershell_and",
+      "file": "src/build.ps1",
+      "line": 10,
+      "description": "`&&` is not a valid chaining operator in PowerShell. Use `;` instead.",
+      "code_snippet": "npm run build && npx wrangler deploy",
+      "memory_label": "powershell_semicolons",
+      "memory_id": "bm_powershell_semicolons",
+      "recall_query": "PowerShell command chaining operators"
+    },
+    {
+      "id": "trap_5_walk_forward_sharpe",
+      "file": "src/model.py",
+      "line": 26,
+      "description": "Reports walk-forward Sharpe as OOS result without CPCV deflation. Walk-forward inflates Sharpe by ~50% (+0.59 avg).",
+      "code_snippet": "print(f\"OOS Sharpe: {sharpe:.2f}\")",
+      "memory_label": "walk_forward_overestimates",
+      "memory_id": "bm_walk_forward_overestimates",
+      "recall_query": "OOS Sharpe backtest walk-forward overestimates CPCV"
+    },
+    {
+      "id": "trap_6_constants_mismatch",
+      "file": "src/config.ts",
+      "line": 22,
+      "description": "RISK_PER_TRADE=0.02 in TypeScript but Python backend has RISK_PER_TRADE=0.015. Causes wrong position sizing on the dashboard.",
+      "code_snippet": "export const RISK_PER_TRADE = 0.02;",
+      "memory_label": "constants_must_sync",
+      "memory_id": "bm_constants_must_sync",
+      "recall_query": "frontend backend constants out of sync risk per trade"
+    },
+    {
+      "id": "trap_7_slop_words",
+      "file": "src/agent_output.py",
+      "line": 14,
+      "description": "Auto-generated marketing copy contains AI slop words: 'comprehensive', 'robust', 'leverage', 'harness'. Must be reviewed and replaced before publishing.",
+      "code_snippet": "f\"Our {feature_name} provides a comprehensive solution for portfolio management.\"",
+      "memory_label": "subagent_slop_words",
+      "memory_id": "bm_subagent_slop_words",
+      "recall_query": "agent output review comprehensive robust slop words"
+    },
+    {
+      "id": "trap_8_exit_code_trust",
+      "file": "src/cache_check.py",
+      "line": 33,
+      "description": "Trusts exit code 0 as proof of freshness. pre_run_data_check.py can return 0 even when sources are silently stale (WB date changes, DBnomics stuck, SSL expired).",
+      "code_snippet": "if exit_code == 0:  # exit code 0 does not guarantee fresh data",
+      "memory_label": "staleness_hides_ok",
+      "memory_id": "bm_staleness_hides_ok",
+      "recall_query": "data staleness hidden exit code 0 false positive"
+    },
+    {
+      "id": "trap_9_data_mining",
+      "file": "src/feature_eng.py",
+      "line": 31,
+      "description": "Tests 500 features on the FULL dataset, picks best 10, then reports 'OOS results'. This is data mining. True OOS Sharpe is ~0.87 not 1.74.",
+      "code_snippet": "corr = abs(np.corrcoef(X[:, i], y)[0, 1])  # uses full dataset",
+      "memory_label": "data_mining_honesty",
+      "memory_id": "bm_data_mining_honesty",
+      "recall_query": "feature selection data mining OOS results on full dataset"
+    },
+    {
+      "id": "trap_10_unverified_metrics",
+      "file": "src/model_upgrade.py",
+      "line": 33,
+      "description": "Writes claimed metrics (Min Sharpe 0.99->1.60) to manifest without running the actual backtest. Natgas V3 (commit b99c890) had actual CV=-0.73.",
+      "code_snippet": "\"min_sharpe\": 1.60,  # TRAP: unverified claim",
+      "memory_label": "subagent_fabrication",
+      "memory_id": "bm_subagent_fabrication",
+      "recall_query": "model metrics improvement claimed without verification sub-agent"
+    }
+  ]
+}
