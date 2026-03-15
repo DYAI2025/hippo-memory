@@ -6,25 +6,44 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 export interface HippoConfig {
-  embeddings: {
+  defaultHalfLifeDays: number;
+  defaultBudget: number;
+  defaultContextBudget: number;
+  autoSleep: {
     enabled: boolean;
+    threshold: number;  // trigger sleep after this many new memories
+  };
+  embeddings: {
+    enabled: boolean | 'auto';  // 'auto' = use if dependency installed
     model: string;
     hybridWeight: number;
   };
   global: {
     enabled: boolean;
   };
+  gitLearnPatterns: string[];
 }
 
 const DEFAULT_CONFIG: HippoConfig = {
-  embeddings: {
+  defaultHalfLifeDays: 7,
+  defaultBudget: 4000,
+  defaultContextBudget: 3000,
+  autoSleep: {
     enabled: true,
+    threshold: 50,
+  },
+  embeddings: {
+    enabled: 'auto',
     model: 'Xenova/all-MiniLM-L6-v2',
     hybridWeight: 0.6,
   },
   global: {
     enabled: true,
   },
+  gitLearnPatterns: [
+    'fix', 'revert', 'bug', 'error', 'hotfix', 'bugfix',
+    'refactor', 'perf', 'chore', 'breaking', 'deprecate',
+  ],
 };
 
 export function loadConfig(hippoRoot: string): HippoConfig {
@@ -33,8 +52,13 @@ export function loadConfig(hippoRoot: string): HippoConfig {
   try {
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Partial<HippoConfig>;
     return {
+      defaultHalfLifeDays: raw.defaultHalfLifeDays ?? DEFAULT_CONFIG.defaultHalfLifeDays,
+      defaultBudget: raw.defaultBudget ?? DEFAULT_CONFIG.defaultBudget,
+      defaultContextBudget: raw.defaultContextBudget ?? DEFAULT_CONFIG.defaultContextBudget,
+      autoSleep: { ...DEFAULT_CONFIG.autoSleep, ...(raw.autoSleep ?? {}) },
       embeddings: { ...DEFAULT_CONFIG.embeddings, ...(raw.embeddings ?? {}) },
       global: { ...DEFAULT_CONFIG.global, ...(raw.global ?? {}) },
+      gitLearnPatterns: raw.gitLearnPatterns ?? DEFAULT_CONFIG.gitLearnPatterns,
     };
   } catch {
     return { ...DEFAULT_CONFIG };

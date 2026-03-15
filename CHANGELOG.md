@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 (2026-03-15)
+
+### Added
+- Configurable `defaultHalfLifeDays` in `.hippo/config.json` (default: 7). Adjust for teams that code in bursts.
+- Configurable `defaultBudget` (4000) and `defaultContextBudget` (3000) for recall and context commands.
+- Auto-sleep: triggers `hippo sleep` after 50 new memories in 24 hours. Configure via `autoSleep.enabled` and `autoSleep.threshold`.
+- Configurable `gitLearnPatterns` array for `hippo learn --git`. Default now includes: fix, revert, bug, error, hotfix, bugfix, refactor, perf, chore, breaking, deprecate.
+
+### Changed
+- Embeddings default to `"auto"`: uses `@xenova/transformers` if installed, falls back to BM25 silently.
+- MCP server refactored to use programmatic API directly (no child process spawning). 10x faster tool calls.
+- Git learn patterns broadened: now catches refactor, perf, chore, breaking, and deprecate commits in addition to fix/revert/bug.
+- Default context budget raised from 1500 to 3000 for main sessions.
+
 ## 0.4.1 (2026-03-15)
 
 ### Added

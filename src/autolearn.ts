@@ -40,17 +40,18 @@ export function captureError(
  * Parse git log output for actionable lessons.
  * Looks for fix:, revert:, bug:, error:, hotfix: commit messages.
  */
-export function extractLessons(gitLog: string): string[] {
+export function extractLessons(gitLog: string, customPatterns?: string[]): string[] {
   const lessons: string[] = [];
   const lines = gitLog.split('\n');
 
   // Patterns that indicate a lesson to learn from
-  // Handle git log formats: "abc1234 fix: message" or "Fix broken thing"
+  // Covers: fix, revert, bug, error, hotfix, refactor, perf, chore, breaking, deprecate
+  const prefixes = customPatterns?.join('|') ?? 'fix|revert|bug|error|hotfix|bugfix|refactor|perf|chore|breaking|deprecate';
   const patterns = [
-    /^[a-f0-9]+\s+(fix|revert|bug|error|hotfix|bugfix)(\(.+?\))?:?\s+(.+)/i,
-    /^(fix|revert|bug|error|hotfix|bugfix)(\(.+?\))?:?\s+(.+)/i,
-    /^(Fix|Revert|Bug|Hotfix|Bugfix)\s+(.+)/,
-    /\b(fixed|reverted|corrected|resolved)\b.{3,100}/i,
+    new RegExp(`^[a-f0-9]+\\s+(${prefixes})(\\(.+?\\))?:?\\s+(.+)`, 'i'),
+    new RegExp(`^(${prefixes})(\\(.+?\\))?:?\\s+(.+)`, 'i'),
+    /^(Fix|Revert|Bug|Hotfix|Bugfix|Refactor|Perf)\s+(.+)/,
+    /\b(fixed|reverted|corrected|resolved|refactored|optimized|deprecated)\b.{3,100}/i,
   ];
 
   for (const line of lines) {

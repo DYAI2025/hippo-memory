@@ -3,12 +3,44 @@
  * Hippo Memory MCP Server
  *
  * Exposes hippo memory as MCP tools over stdio transport.
- * Works with any MCP-compatible client: Cursor, Windsurf, Cline, Claude Desktop, etc.
+ * Uses the programmatic API directly (no child process spawning).
  *
  * Usage: hippo mcp (or npx hippo-memory mcp)
  */
 
-import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import {
+  createMemory,
+  Layer,
+  applyOutcome,
+  calculateStrength,
+} from '../memory.js';
+import { search, markRetrieved, estimateTokens } from '../search.js';
+import { loadAllEntries, writeEntry, readEntry, initStore } from '../store.js';
+import { consolidate } from '../consolidate.js';
+import { fetchGitLog, extractLessons, deduplicateLesson } from '../autolearn.js';
+import { loadConfig } from '../config.js';
+import { resolveConfidence } from '../memory.js';
+
+// ── Find hippo root ──
+
+function findHippoRoot(): string | null {
+  // Walk up from cwd
+  let dir = process.cwd();
+  while (true) {
+    const candidate = path.join(dir, '.hippo');
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Global fallback
+  const home = process.env.USERPROFILE || process.env.HOME || '';
+  const global = path.join(home, '.hippo');
+  if (fs.existsSync(global)) return global;
+  return null;
+}
 
 // ── MCP protocol types ──
 
@@ -26,24 +58,29 @@ interface McpResponse {
   error?: { code: number; message: string };
 }
 
-// ── Helpers ──
-
-function runHippo(args: string): string {
-  try {
-    return execSync(`hippo ${args}`, {
-      timeout: 30000,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-  } catch (err: any) {
-    return err.stdout?.trim() || err.message || 'hippo command failed';
-  }
-}
-
 function send(msg: McpResponse): void {
   const json = JSON.stringify(msg);
   const header = `Content-Length: ${Buffer.byteLength(json)}\r\n\r\n`;
   process.stdout.write(header + json);
+}
+
+// ── Format helpers ──
+
+function formatMemories(results: ReturnType<typeof search>, hippoRoot: string): string {
+  if (results.length === 0) return 'No relevant memories found.';
+
+  const config = loadConfig(hippoRoot);
+  const lines: string[] = [`Found ${results.length} memories:\n`];
+
+  for (const r of results) {
+    const conf = resolveConfidence(r.entry);
+    const tags = r.entry.tags.length > 0 ? ` tags: ${r.entry.tags.join(', ')}` : '';
+    lines.push(`[${conf}]${tags} (strength=${r.entry.strength.toFixed(2)})`);
+    lines.push(r.entry.content);
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
 
 // ── Tool definitions ──
@@ -118,7 +155,7 @@ const TOOLS = [
   {
     name: 'hippo_learn',
     description:
-      'Scan recent git commits for lessons from fix/revert/bug patterns. Run after coding sessions.',
+      'Scan recent git commits for lessons from fix/revert/bug/refactor/perf patterns. Run after coding sessions.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -128,37 +165,145 @@ const TOOLS = [
   },
 ];
 
+// ── Track last recalled IDs for outcome feedback ──
+let lastRecalledIds: string[] = [];
+
 // ── Tool execution ──
 
 function executeTool(name: string, args: Record<string, unknown>): string {
+  const hippoRoot = findHippoRoot();
+  if (!hippoRoot) return 'No .hippo/ store found. Run: hippo init';
+
+  const config = loadConfig(hippoRoot);
+
   switch (name) {
     case 'hippo_recall': {
-      const query = String(args.query || '').replace(/"/g, '\\"');
-      const budget = Number(args.budget) || 1500;
-      return runHippo(`recall "${query}" --budget ${budget}`);
+      const query = String(args.query || '');
+      const budget = Number(args.budget) || config.defaultBudget;
+      const entries = loadAllEntries(hippoRoot);
+      const results = search(query, entries, { budget, hippoRoot });
+
+      // Mark retrieved and persist
+      const retrieved = markRetrieved(results.map((r) => r.entry));
+      for (const entry of retrieved) writeEntry(hippoRoot, entry);
+      lastRecalledIds = retrieved.map((e) => e.id);
+
+      return formatMemories(results, hippoRoot);
     }
+
     case 'hippo_remember': {
-      const text = String(args.text || '').replace(/"/g, '\\"');
-      let cmd = `remember "${text}"`;
-      if (args.error) cmd += ' --error';
-      if (args.pin) cmd += ' --pin';
-      if (args.tag) cmd += ` --tag ${args.tag}`;
-      return runHippo(cmd);
+      const text = String(args.text || '');
+      if (!text) return 'No text provided.';
+      const tags: string[] = [];
+      if (args.error) tags.push('error');
+      if (args.tag) tags.push(String(args.tag));
+      const entry = createMemory(text, {
+        layer: Layer.Episodic,
+        tags,
+        pinned: Boolean(args.pin),
+        source: 'mcp',
+        confidence: 'verified',
+        baseHalfLifeDays: config.defaultHalfLifeDays,
+      });
+      writeEntry(hippoRoot, entry);
+
+      // Auto-sleep check
+      if (config.autoSleep.enabled) {
+        const allEntries = loadAllEntries(hippoRoot);
+        const recentCount = allEntries.filter((e) => {
+          const age = (Date.now() - new Date(e.created).getTime()) / (1000 * 60 * 60);
+          return age < 24; // created in last 24 hours
+        }).length;
+        if (recentCount >= config.autoSleep.threshold) {
+          consolidate(hippoRoot);
+        }
+      }
+
+      return `Remembered [${entry.id}] (half-life: ${entry.half_life_days}d, tags: ${entry.tags.join(', ') || 'none'})`;
     }
+
     case 'hippo_outcome': {
-      return runHippo(`outcome ${args.good ? '--good' : '--bad'}`);
+      const good = Boolean(args.good);
+      if (lastRecalledIds.length === 0) return 'No recent recalls to apply outcome to.';
+
+      let count = 0;
+      for (const id of lastRecalledIds) {
+        const entry = readEntry(hippoRoot, id);
+        if (entry) {
+          const updated = applyOutcome(entry, good);
+          writeEntry(hippoRoot, updated);
+          count++;
+        }
+      }
+      return `Applied ${good ? 'positive' : 'negative'} outcome to ${count} memories`;
     }
+
     case 'hippo_context': {
-      const budget = Number(args.budget) || 1500;
-      return runHippo(`context --auto --budget ${budget}`);
+      const budget = Number(args.budget) || config.defaultContextBudget;
+      // Auto-detect query from git
+      let query = '';
+      try {
+        const { execSync } = require('child_process');
+        const branch = execSync('git rev-parse --abbrev-ref HEAD 2>/dev/null', { encoding: 'utf-8' }).trim();
+        const diff = execSync('git diff --cached --stat 2>/dev/null', { encoding: 'utf-8' }).trim();
+        const log = execSync('git log -1 --pretty=format:"%s" 2>/dev/null', { encoding: 'utf-8' }).trim();
+        query = [branch, log, diff].filter(Boolean).join(' ');
+      } catch { /* not a git repo */ }
+
+      if (!query) query = 'project context general';
+
+      const entries = loadAllEntries(hippoRoot);
+      const results = search(query, entries, { budget, hippoRoot });
+      const retrieved = markRetrieved(results.map((r) => r.entry));
+      for (const entry of retrieved) writeEntry(hippoRoot, entry);
+      lastRecalledIds = retrieved.map((e) => e.id);
+
+      return formatMemories(results, hippoRoot);
     }
+
     case 'hippo_status': {
-      return runHippo('status');
+      const entries = loadAllEntries(hippoRoot);
+      const now = new Date();
+      let atRisk = 0;
+      let totalStrength = 0;
+      for (const e of entries) {
+        const s = calculateStrength(e, now);
+        totalStrength += s;
+        if (s < 0.1 && !e.pinned) atRisk++;
+      }
+      const avgStrength = entries.length > 0 ? (totalStrength / entries.length).toFixed(2) : '0';
+      const pinned = entries.filter((e) => e.pinned).length;
+      const errors = entries.filter((e) => e.tags.includes('error')).length;
+      return [
+        `Memories: ${entries.length} (${pinned} pinned, ${errors} errors)`,
+        `Avg strength: ${avgStrength}`,
+        `At risk (<0.1): ${atRisk}`,
+        `Half-life default: ${config.defaultHalfLifeDays}d`,
+      ].join('\n');
     }
+
     case 'hippo_learn': {
       const days = Number(args.days) || 7;
-      return runHippo(`learn --git --days ${days}`);
+      const gitLog = fetchGitLog(process.cwd(), days);
+      if (!gitLog) return 'No git history found.';
+      const lessons = extractLessons(gitLog, config.gitLearnPatterns);
+      let added = 0;
+      let skipped = 0;
+      for (const lesson of lessons) {
+        if (deduplicateLesson(hippoRoot, lesson)) { skipped++; continue; }
+        const entry = createMemory(lesson, {
+          layer: Layer.Episodic,
+          tags: ['git-learned'],
+          source: 'git',
+          confidence: 'observed',
+          baseHalfLifeDays: config.defaultHalfLifeDays,
+        });
+        writeEntry(hippoRoot, entry);
+        added++;
+      }
+      return `Git learn: ${added} new, ${skipped} duplicates skipped (scanned ${days} days)`;
     }
+
     default:
       return `Unknown tool: ${name}`;
   }
@@ -177,12 +322,11 @@ function handleRequest(req: McpRequest): McpResponse {
         result: {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'hippo-memory', version: '0.4.0' },
+          serverInfo: { name: 'hippo-memory', version: '0.4.1' },
         },
       };
 
     case 'notifications/initialized':
-      // No response needed for notifications
       return { jsonrpc: '2.0', id, result: {} };
 
     case 'tools/list':
@@ -242,9 +386,9 @@ process.stdin.on('data', (chunk: string) => {
         const res = handleRequest(req);
         send(res);
       } else if (req.method) {
-        handleRequest(req); // handle but don't send response for notifications
+        handleRequest(req);
       }
-    } catch (err) {
+    } catch {
       // Skip malformed messages
     }
   }
@@ -252,6 +396,5 @@ process.stdin.on('data', (chunk: string) => {
 
 process.stdin.on('end', () => process.exit(0));
 
-// Prevent unhandled errors from crashing the server
 process.on('uncaughtException', () => {});
 process.on('unhandledRejection', () => {});

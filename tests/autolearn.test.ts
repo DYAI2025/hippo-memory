@@ -79,11 +79,11 @@ describe('extractLessons', () => {
     expect(lessons.length).toBe(2);
   });
 
-  it('ignores non-fix commits', () => {
+  it('ignores non-matching commits', () => {
     const log = [
       'abc1234 feat: add dark mode',
-      'def5678 chore: update dependencies',
       'ghi9012 docs: readme update',
+      'jkl3456 ci: update pipeline',
     ].join('\n');
 
     const lessons = extractLessons(log);
@@ -113,9 +113,10 @@ describe('extractLessons', () => {
     expect(lessonsA.length).toBe(1);
     expect(lessonsA[0]).toContain('broken auth flow');
 
-    expect(lessonsB.length).toBe(2);
+    expect(lessonsB.length).toBe(3);
     expect(lessonsB.some((l) => l.includes('connection pool'))).toBe(true);
     expect(lessonsB.some((l) => l.includes('bad migration'))).toBe(true);
+    expect(lessonsB.some((l) => l.includes('bump dependencies'))).toBe(true);
 
     // Combined set has no overlap
     const all = [...lessonsA, ...lessonsB];
