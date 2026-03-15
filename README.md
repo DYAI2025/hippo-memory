@@ -179,6 +179,12 @@ Results are ranked by `relevance * strength * recency`. The highest-signal memor
 | `hippo recall "<query>"` | Retrieve relevant memories |
 | `hippo recall "<query>" --budget <n>` | Recall within token limit (default: 4000) |
 | `hippo recall "<query>" --json` | Output as JSON |
+| `hippo context --auto` | Smart context injection (auto-detects task from git) |
+| `hippo context "<query>" --budget <n>` | Context injection with explicit query (default: 1500) |
+| `hippo context --budget 0` | Skip entirely (zero token cost) |
+| `hippo hook list` | Show available framework hooks |
+| `hippo hook install <target>` | Install hook (claude-code, codex, cursor, openclaw) |
+| `hippo hook uninstall <target>` | Remove hook |
 | `hippo sleep` | Run consolidation (decay + merge + compress) |
 | `hippo sleep --dry-run` | Preview consolidation without writing |
 | `hippo status` | Memory health: counts, strengths, last sleep |
@@ -192,69 +198,59 @@ Results are ranked by `relevance * strength * recency`. The highest-signal memor
 
 ## Framework Integrations
 
-### Claude Code (CLAUDE.md)
+One command. Done.
+
+```bash
+hippo hook install claude-code   # patches CLAUDE.md
+hippo hook install codex         # patches AGENTS.md
+hippo hook install cursor        # patches .cursorrules
+hippo hook install openclaw      # creates .openclaw/skills/hippo/SKILL.md
+```
+
+This adds a `<!-- hippo:start -->` ... `<!-- hippo:end -->` block that tells the agent to:
+1. Run `hippo context --auto --budget 1500` at session start
+2. Run `hippo remember "<lesson>" --error` on errors
+3. Run `hippo outcome --good` on completion
+
+To remove: `hippo hook uninstall claude-code`
+
+### What the hook adds (Claude Code example)
 
 ```markdown
-## Memory
+## Project Memory (Hippo)
 
-Before starting work:
-`hippo recall "<describe the task>" --budget 3000`
+Before starting work, load relevant context:
+hippo context --auto --budget 1500
 
-When you learn something important:
-`hippo remember "<the lesson>"`
+When you hit an error or discover a gotcha:
+hippo remember "<what went wrong and why>" --error
 
-When you hit an error:
-`hippo remember "<what failed and why>" --error`
-
-After completing work:
-`hippo outcome --good` (memories helped) or `hippo outcome --bad` (they didn't)
+After completing work successfully:
+hippo outcome --good
 ```
 
-### Cursor (.cursorrules)
+### Generic / MCP
 
-```
-Before each task, check project memory:
-  Run: hippo recall "<task description>" --budget 2000
-  Inject the output as context before writing code.
-
-After learning something worth keeping:
-  Run: hippo remember "<the insight>"
-
-After hitting an error:
-  Run: hippo remember "<what went wrong>" --error
-```
-
-### OpenClaw
-
-See [integrations/openclaw.md](integrations/openclaw.md) for the full SKILL.md.
-
-```yaml
-# Short version: add to your OpenClaw skill
-on_session_start: hippo recall "{{task}}" --budget 3000
-on_error: hippo remember "{{error_summary}}" --error
-on_session_end: hippo outcome --good  # or --bad
-```
-
-### Generic MCP
+For any agent that can run shell commands:
 
 ```json
 {
   "tools": [
     {
-      "name": "memory_recall",
-      "description": "Retrieve relevant memories for the current task",
-      "command": "hippo recall {query} --budget {budget} --json"
+      "name": "memory_context",
+      "description": "Load relevant project memory for the current task",
+      "command": "hippo context --auto --budget 1500"
     },
     {
       "name": "memory_store",
       "description": "Store a new memory",
-      "command": "hippo remember {text} {--error if error}"
+      "command": "hippo remember {text} --error"
     }
   ]
 }
 ```
 
-Full integration files: [integrations/](integrations/)
+Full integration details: [integrations/](integrations/)
 
 ---
 
