@@ -43,6 +43,23 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
+### Zero-config agent integration
+
+`hippo init` auto-detects your agent framework and wires itself in:
+
+```bash
+cd my-project
+hippo init
+
+# Initialized Hippo at /my-project
+#    Directories: buffer/ episodic/ semantic/ conflicts/
+#    Auto-installed claude-code hook in CLAUDE.md
+```
+
+If you have a `CLAUDE.md`, it patches it. `AGENTS.md` for Codex/OpenClaw. `.cursorrules` for Cursor. No manual `hook install` needed. Your agent starts using Hippo on its next session.
+
+To skip auto-detection: `hippo init --no-hooks`
+
 ---
 
 ## Cross-Tool Import
@@ -91,26 +108,26 @@ Input enters the buffer. Important things get encoded into episodic memory. Duri
 
 ```
 New information
-      │
-      ▼
-┌─────────────┐
-│   Buffer    │  Working memory. Current session only. No decay.
-│  (session)  │
-└──────┬──────┘
-       │  encoded (tags, strength, half-life assigned)
-       ▼
-┌─────────────┐
-│   Episodic  │  Timestamped memories. Decay by default.
-│    Store    │  Retrieval strengthens. Errors stick longer.
-└──────┬──────┘
-       │  consolidation (hippo sleep)
-       ▼
-┌─────────────┐
-│   Semantic  │  Compressed patterns. Stable. Schema-aware.
-│    Store    │  Extracted from repeated episodes.
-└─────────────┘
+      |
+      v
++-----------+
+|  Buffer   |  Working memory. Current session only. No decay.
+| (session) |
++-----+-----+
+      |  encoded (tags, strength, half-life assigned)
+      v
++-----------+
+|  Episodic |  Timestamped memories. Decay by default.
+|   Store   |  Retrieval strengthens. Errors stick longer.
++-----+-----+
+      |  consolidation (hippo sleep)
+      v
++-----------+
+|  Semantic |  Compressed patterns. Stable. Schema-aware.
+|   Store   |  Extracted from repeated episodes.
++-----------+
 
-         💤  hippo sleep: decay + replay + merge
+         hippo sleep: decay + replay + merge
 ```
 
 ---
@@ -139,13 +156,13 @@ Use it or lose it. Each recall boosts the half-life by 2 days.
 
 ```bash
 hippo recall "cache issues"
-# finds mem_a1b2c3, retrieval_count: 1 → 2
-# half_life extended: 7d → 9d
+# finds mem_a1b2c3, retrieval_count: 1 -> 2
+# half_life extended: 7d -> 9d
 # strength recalculated from retrieval timestamp
 
 hippo recall "cache issues"   # again next week
-# retrieval_count: 2 → 3
-# half_life: 9d → 11d
+# retrieval_count: 2 -> 3
+# half_life: 9d -> 11d
 # this memory is learning to survive
 ```
 
@@ -181,7 +198,7 @@ When context is generated, confidence is shown inline:
 ```
 [verified] API rate limit is 100/min per the docs
 [observed] Deploy usually takes ~3 min
-[inferred] ⚠️ The flaky test might be a race condition
+[inferred] The flaky test might be a race condition
 ```
 
 Agents can see at a glance what's established fact vs. a pattern worth questioning.
@@ -216,9 +233,9 @@ Run `hippo sleep` and episodes compress into patterns.
 ```bash
 hippo sleep
 
-# 💤 Running consolidation...
+# Running consolidation...
 #
-# 📊 Results:
+# Results:
 #    Active memories:    23
 #    Removed (decayed):   4
 #    Merged episodic:     6
@@ -238,11 +255,11 @@ hippo recall "why is the gold model broken"
 # ... you read the memories and fix the bug ...
 
 hippo outcome --good
-# 👍 Applied positive outcome to 3 memories
+# Applied positive outcome to 3 memories
 # half_life +5d on each
 
 hippo outcome --bad
-# 👎 Applied negative outcome to 3 memories
+# Applied negative outcome to 3 memories
 # half_life -3d on each
 # irrelevant memories decay faster
 ```
@@ -268,12 +285,51 @@ Results are ranked by `relevance * strength * recency`. The highest-signal memor
 
 ---
 
+### Auto-learn from git
+
+Hippo can scan your commit history and extract lessons from fix/revert/bug commits automatically.
+
+```bash
+# Learn from the last 7 days of commits
+hippo learn --git
+
+# Learn from the last 30 days
+hippo learn --git --days 30
+
+# Scan multiple repos in one pass
+hippo learn --git --repos "~/project-a,~/project-b,~/project-c"
+```
+
+The `--repos` flag accepts comma-separated paths. Hippo scans each repo's git log, extracts fix/revert/bug lessons, deduplicates against existing memories, and stores new ones. Pair with `hippo sleep` afterwards to consolidate.
+
+Ideal for a weekly cron:
+
+```bash
+hippo learn --git --repos "~/repo1,~/repo2" --days 7
+hippo sleep
+```
+
+---
+
+### Watch mode
+
+Wrap any command with `hippo watch` to auto-learn from failures:
+
+```bash
+hippo watch "npm run build"
+# if it fails, Hippo captures the error automatically
+# next time an agent asks about build issues, the memory is there
+```
+
+---
+
 ## CLI Reference
 
 | Command | What it does |
 |---------|-------------|
-| `hippo init` | Create `.hippo/` in current directory |
+| `hippo init` | Create `.hippo/` + auto-install agent hooks |
 | `hippo init --global` | Create global store at `~/.hippo/` |
+| `hippo init --no-hooks` | Create `.hippo/` without auto-installing hooks |
 | `hippo remember "<text>"` | Store a memory |
 | `hippo remember "<text>" --tag <t>` | Store with tag (repeatable) |
 | `hippo remember "<text>" --error` | Store as error (2x half-life) |
@@ -293,7 +349,7 @@ Results are ranked by `relevance * strength * recency`. The highest-signal memor
 | `hippo import --chatgpt <path>` | Import from ChatGPT memory export (JSON or txt) |
 | `hippo import --claude <path>` | Import from CLAUDE.md or Claude memory.json |
 | `hippo import --cursor <path>` | Import from .cursorrules or .cursor/rules |
-| `hippo import --markdown <path>` | Import from structured markdown (headings → tags) |
+| `hippo import --markdown <path>` | Import from structured markdown (headings -> tags) |
 | `hippo import --file <path>` | Import from any text file |
 | `hippo import --dry-run` | Preview import without writing |
 | `hippo import --global` | Write imported memories to `~/.hippo/` |
@@ -313,6 +369,7 @@ Results are ranked by `relevance * strength * recency`. The highest-signal memor
 | `hippo watch "<command>"` | Run command, auto-learn from failures |
 | `hippo learn --git` | Scan recent git commits for lessons |
 | `hippo learn --git --days <n>` | Scan N days back (default: 7) |
+| `hippo learn --git --repos <paths>` | Scan multiple repos (comma-separated) |
 | `hippo promote <id>` | Copy a local memory to the global store |
 | `hippo sync` | Pull global memories into local project |
 | `hippo hook list` | Show available framework hooks |
@@ -323,13 +380,28 @@ Results are ranked by `relevance * strength * recency`. The highest-signal memor
 
 ## Framework Integrations
 
-One command. Done.
+### Auto-install (recommended)
+
+`hippo init` detects your agent framework and patches the right config file automatically:
+
+| Framework | Detected by | Patches |
+|-----------|------------|---------|
+| Claude Code | `CLAUDE.md` or `.claude/settings.json` | `CLAUDE.md` |
+| Codex | `AGENTS.md` or `.codex` | `AGENTS.md` |
+| Cursor | `.cursorrules` or `.cursor/rules` | `.cursorrules` |
+| OpenClaw | `.openclaw` or `AGENTS.md` | `AGENTS.md` |
+
+No extra commands needed. Just `hippo init` and your agent knows about Hippo.
+
+### Manual install
+
+If you prefer explicit control:
 
 ```bash
 hippo hook install claude-code   # patches CLAUDE.md
 hippo hook install codex         # patches AGENTS.md
 hippo hook install cursor        # patches .cursorrules
-hippo hook install openclaw      # creates .openclaw/skills/hippo/SKILL.md
+hippo hook install openclaw      # patches AGENTS.md
 ```
 
 This adds a `<!-- hippo:start -->` ... `<!-- hippo:end -->` block that tells the agent to:
@@ -403,15 +475,17 @@ For how these mechanisms connect to LLM training, continual learning, and open r
 
 | Feature | Hippo | Mem0 | Basic Memory | Claude-Mem |
 |---------|-------|------|-------------|-----------|
-| Decay by default | ✅ | ❌ | ❌ | ❌ |
-| Retrieval strengthening | ✅ | ❌ | ❌ | ❌ |
-| Outcome tracking | ✅ | ❌ | ❌ | ❌ |
-| Confidence tiers | ✅ | ❌ | ❌ | ❌ |
-| Cross-tool import | ✅ | ❌ | ❌ | ❌ |
-| Conversation capture | ✅ | ❌ | ❌ | ❌ |
-| Zero dependencies | ✅ | ❌ | ❌ | ❌ |
-| Git-friendly | ✅ | ❌ | ✅ | ❌ |
-| Framework agnostic | ✅ | Partial | ✅ | ❌ |
+| Decay by default | Yes | No | No | No |
+| Retrieval strengthening | Yes | No | No | No |
+| Outcome tracking | Yes | No | No | No |
+| Confidence tiers | Yes | No | No | No |
+| Cross-tool import | Yes | No | No | No |
+| Conversation capture | Yes | No | No | No |
+| Auto-hook install | Yes | No | No | No |
+| Multi-repo git learn | Yes | No | No | No |
+| Zero dependencies | Yes | No | No | No |
+| Git-friendly | Yes | No | Yes | No |
+| Framework agnostic | Yes | Partial | Yes | No |
 
 Mem0, Basic Memory, and Claude-Mem all implement "save everything, search later." Hippo is the only one that models what memories are worth keeping, and the only one that lets you bring memories from other tools.
 
@@ -427,6 +501,7 @@ The interesting problems:
 - MCP server wrapper
 - Conflict detection between semantic memories
 - Schema acceleration (fast-track memories that fit existing patterns)
+- Multi-agent shared memory with attribution
 
 ## License
 
