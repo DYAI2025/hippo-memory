@@ -20,7 +20,7 @@ const { DatabaseSync } = require('node:sqlite') as {
   DatabaseSync: new (path: string) => DatabaseSyncLike;
 };
 
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 type Migration = {
   version: number;
@@ -62,6 +62,26 @@ const MIGRATIONS: Migration[] = [
           merged INTEGER NOT NULL,
           removed INTEGER NOT NULL
         );
+      `);
+    },
+  },
+  {
+    version: 2,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS task_snapshots (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          next_step TEXT NOT NULL,
+          status TEXT NOT NULL,
+          source TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_task_snapshots_status_updated
+        ON task_snapshots(status, updated_at DESC, id DESC);
       `);
     },
   },

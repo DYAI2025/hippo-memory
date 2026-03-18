@@ -9,6 +9,7 @@
  *   hippo sleep [--dry-run]
  *   hippo status
  *   hippo outcome --good | --bad [--id <id>]
+ *   hippo snapshot <save|show|clear>
  *   hippo forget <id>
  *   hippo inspect <id>
  *   hippo embed [--status]
@@ -43,6 +44,10 @@ import {
   saveIndex,
   loadStats,
   updateStats,
+  saveActiveTaskSnapshot,
+  loadActiveTaskSnapshot,
+  clearActiveTaskSnapshot,
+  TaskSnapshot,
 } from './store.js';
 import { search, markRetrieved, estimateTokens, hybridSearch } from './search.js';
 import { consolidate } from './consolidate.js';
@@ -596,6 +601,87 @@ function cmdInspect(hippoRoot: string, id: string): void {
   console.log(entry.content);
 }
 
+function printActiveTaskSnapshot(snapshot: TaskSnapshot): void {
+  console.log('## Active Task Snapshot\n');
+  console.log(`- Task: ${snapshot.task}`);
+  console.log(`- Status: ${snapshot.status}`);
+  console.log(`- Updated: ${snapshot.updated_at}`);
+  console.log(`- Source: ${snapshot.source}`);
+  console.log('');
+  console.log('### Summary');
+  console.log(snapshot.summary);
+  console.log('');
+  console.log('### Next step');
+  console.log(snapshot.next_step);
+  console.log('');
+}
+
+function cmdSnapshot(
+  hippoRoot: string,
+  args: string[],
+  flags: Record<string, string | boolean | string[]>
+): void {
+  requireInit(hippoRoot);
+
+  const subcommand = args[0] ?? 'show';
+
+  if (subcommand === 'save') {
+    const task = String(flags['task'] ?? '').trim();
+    const summary = String(flags['summary'] ?? '').trim();
+    const nextStep = String(flags['next-step'] ?? '').trim();
+
+    if (!task || !summary || !nextStep) {
+      console.error('Usage: hippo snapshot save --task <task> --summary <summary> --next-step <step> [--source <source>]');
+      process.exit(1);
+    }
+
+    const snapshot = saveActiveTaskSnapshot(hippoRoot, {
+      task,
+      summary,
+      next_step: nextStep,
+      source: String(flags['source'] ?? 'cli'),
+    });
+
+    console.log(`Saved active task snapshot #${snapshot.id}`);
+    console.log(`   Task: ${snapshot.task}`);
+    console.log(`   Next: ${snapshot.next_step}`);
+    return;
+  }
+
+  if (subcommand === 'clear') {
+    const cleared = clearActiveTaskSnapshot(hippoRoot, String(flags['status'] ?? 'cleared'));
+    if (!cleared) {
+      console.log('No active task snapshot to clear.');
+      return;
+    }
+    console.log('Cleared active task snapshot.');
+    return;
+  }
+
+  if (subcommand === 'show') {
+    const snapshot = loadActiveTaskSnapshot(hippoRoot);
+    if (!snapshot) {
+      if (flags['json']) {
+        console.log(JSON.stringify({ snapshot: null }));
+      } else {
+        console.log('No active task snapshot saved.');
+      }
+      return;
+    }
+
+    if (flags['json']) {
+      console.log(JSON.stringify({ snapshot }, null, 2));
+      return;
+    }
+
+    printActiveTaskSnapshot(snapshot);
+    return;
+  }
+
+  console.error('Usage: hippo snapshot <save|show|clear>');
+  process.exit(1);
+}
+
 function cmdContext(
   hippoRoot: string,
   args: string[],
@@ -630,6 +716,7 @@ function cmdContext(
 
   let selectedItems: Array<{ entry: MemoryEntry; score: number; tokens: number; isGlobal?: boolean }> = [];
   let totalTokens = 0;
+  const activeSnapshot = loadActiveTaskSnapshot(hippoRoot);
 
   if (query === '*') {
     // No query: return strongest memories by strength, up to budget
@@ -685,7 +772,7 @@ function cmdContext(
     totalTokens = results.reduce((sum, r) => sum + r.tokens, 0);
   }
 
-  if (selectedItems.length === 0) return;
+  if (selectedItems.length === 0 && !activeSnapshot) return;
 
   // Mark retrieved and persist
   const toUpdate = selectedItems.map((s) => s.entry);
@@ -715,8 +802,11 @@ function cmdContext(
       content: r.entry.content,
       global: r.isGlobal ?? false,
     }));
-    console.log(JSON.stringify({ query, memories: output, tokens: totalTokens }));
+    console.log(JSON.stringify({ query, activeSnapshot, memories: output, tokens: totalTokens }));
   } else {
+    if (activeSnapshot) {
+      printActiveTaskSnapshot(activeSnapshot);
+    }
     printContextMarkdown(
       selectedItems.map((r) => ({
         entry: updatedEntries.find((u) => u.id === r.entry.id) ?? r.entry,
@@ -1336,6 +1426,16 @@ Commands:
     --good                 Memories were helpful
     --bad                  Memories were irrelevant
     --id <id>              Target a specific memory
+  snapshot <sub>           Persist or inspect the current active task
+    snapshot save          Save active task state
+      --task <task>
+      --summary <summary>
+      --next-step <step>
+      --source <source>    Optional source label
+    snapshot show          Show the active task snapshot
+      --json               Output as JSON
+    snapshot clear         Clear the active task snapshot
+      --status <status>    Mark final status (default: cleared)
   forget <id>              Force remove a memory
   inspect <id>             Show full memory detail
   embed                    Embed all memories for semantic search
@@ -1373,6 +1473,7 @@ Examples:
   hippo remember "FRED cache can silently drop series" --tag error
   hippo recall "data pipeline issues" --budget 2000
   hippo context --auto --budget 1500
+  hippo snapshot save --task "Ship feature" --summary "Tests are green" --next-step "Open the PR"
   hippo embed --status
   hippo watch "npm run build"
   hippo learn --git --days 30
@@ -1428,6 +1529,10 @@ async function main(): Promise<void> {
 
     case 'outcome':
       cmdOutcome(hippoRoot, flags);
+      break;
+
+    case 'snapshot':
+      cmdSnapshot(hippoRoot, args, flags);
       break;
 
     case 'forget': {

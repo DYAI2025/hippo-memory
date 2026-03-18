@@ -62,6 +62,28 @@ interface ConsolidationRunRow {
   removed: number;
 }
 
+interface TaskSnapshotRow {
+  id: number;
+  task: string;
+  summary: string;
+  next_step: string;
+  status: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskSnapshot {
+  id: number;
+  task: string;
+  summary: string;
+  next_step: string;
+  status: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
 const INDEX_VERSION = 2;
 const MEMORY_SELECT_COLUMNS = `id, created, last_retrieved, retrieval_count, strength, half_life_days, layer, tags_json, emotional_valence, schema_fit, source, outcome_score, conflicts_with_json, pinned, confidence, content`;
 const DEFAULT_SEARCH_CANDIDATE_LIMIT = 200;
@@ -188,6 +210,56 @@ function parseJsonArray(raw: string | null | undefined): string[] {
     return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
   } catch {
     return [];
+  }
+}
+
+function rowToTaskSnapshot(row: TaskSnapshotRow): TaskSnapshot {
+  return {
+    id: Number(row.id),
+    task: row.task,
+    summary: row.summary,
+    next_step: row.next_step,
+    status: row.status,
+    source: row.source,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function writeActiveTaskMirror(hippoRoot: string, snapshot: TaskSnapshot): void {
+  const filePath = path.join(hippoRoot, 'buffer', 'active-task.md');
+  const fm = dumpFrontmatter({
+    id: snapshot.id,
+    task: snapshot.task,
+    status: snapshot.status,
+    source: snapshot.source,
+    created_at: snapshot.created_at,
+    updated_at: snapshot.updated_at,
+    next_step: snapshot.next_step,
+  });
+
+  const body = [
+    `# Active Task Snapshot`,
+    '',
+    `## Summary`,
+    snapshot.summary,
+    '',
+    `## Next step`,
+    snapshot.next_step,
+    '',
+    `## Task`,
+    snapshot.task,
+    '',
+  ].join('\n');
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${fm}\n\n${body}`, 'utf8');
+}
+
+function removeActiveTaskMirror(hippoRoot: string): void {
+  const filePath = path.join(hippoRoot, 'buffer', 'active-task.md');
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
   }
 }
 
@@ -666,6 +738,103 @@ export function appendConsolidationRun(
     );
     pruneConsolidationRuns(db, 50);
     writeStatsMirror(hippoRoot, buildStatsFromDb(db));
+  } finally {
+    closeHippoDb(db);
+  }
+}
+
+export function saveActiveTaskSnapshot(
+  hippoRoot: string,
+  snapshot: { task: string; summary: string; next_step: string; source?: string }
+): TaskSnapshot {
+  initStore(hippoRoot);
+  const db = openHippoDb(hippoRoot);
+  const now = new Date().toISOString();
+
+  try {
+    db.exec('BEGIN');
+    db.prepare(`UPDATE task_snapshots SET status = 'superseded', updated_at = ? WHERE status = 'active'`).run(now);
+
+    const result = db.prepare(`
+      INSERT INTO task_snapshots(task, summary, next_step, status, source, created_at, updated_at)
+      VALUES (?, ?, ?, 'active', ?, ?, ?)
+    `).run(
+      snapshot.task,
+      snapshot.summary,
+      snapshot.next_step,
+      snapshot.source ?? 'cli',
+      now,
+      now,
+    );
+
+    db.exec('COMMIT');
+
+    const id = Number(result.lastInsertRowid ?? 0);
+    const row = db.prepare(`
+      SELECT id, task, summary, next_step, status, source, created_at, updated_at
+      FROM task_snapshots
+      WHERE id = ?
+    `).get(id) as TaskSnapshotRow | undefined;
+
+    if (!row) {
+      throw new Error('Failed to reload saved active task snapshot');
+    }
+
+    const loaded = rowToTaskSnapshot(row);
+    writeActiveTaskMirror(hippoRoot, loaded);
+    return loaded;
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // Ignore nested rollback failures.
+    }
+    throw error;
+  } finally {
+    closeHippoDb(db);
+  }
+}
+
+export function loadActiveTaskSnapshot(hippoRoot: string): TaskSnapshot | null {
+  initStore(hippoRoot);
+  const db = openHippoDb(hippoRoot);
+  try {
+    const row = db.prepare(`
+      SELECT id, task, summary, next_step, status, source, created_at, updated_at
+      FROM task_snapshots
+      WHERE status = 'active'
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `).get() as TaskSnapshotRow | undefined;
+
+    if (!row) {
+      removeActiveTaskMirror(hippoRoot);
+      return null;
+    }
+
+    const loaded = rowToTaskSnapshot(row);
+    writeActiveTaskMirror(hippoRoot, loaded);
+    return loaded;
+  } finally {
+    closeHippoDb(db);
+  }
+}
+
+export function clearActiveTaskSnapshot(hippoRoot: string, clearedStatus: string = 'cleared'): boolean {
+  initStore(hippoRoot);
+  const db = openHippoDb(hippoRoot);
+  const now = new Date().toISOString();
+
+  try {
+    const active = db.prepare(`SELECT id FROM task_snapshots WHERE status = 'active' ORDER BY updated_at DESC, id DESC LIMIT 1`).get() as { id?: number } | undefined;
+    if (!active?.id) {
+      removeActiveTaskMirror(hippoRoot);
+      return false;
+    }
+
+    db.prepare(`UPDATE task_snapshots SET status = ?, updated_at = ? WHERE id = ?`).run(clearedStatus, now, active.id);
+    removeActiveTaskMirror(hippoRoot);
+    return true;
   } finally {
     closeHippoDb(db);
   }

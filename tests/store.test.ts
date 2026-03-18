@@ -14,6 +14,9 @@ import {
   rebuildIndex,
   loadStats,
   updateStats,
+  saveActiveTaskSnapshot,
+  loadActiveTaskSnapshot,
+  clearActiveTaskSnapshot,
 } from '../src/store.js';
 import {
   openHippoDb,
@@ -290,5 +293,76 @@ describe('loadAllEntries', () => {
   it('returns empty array for fresh store', () => {
     initStore(tmpDir);
     expect(loadAllEntries(tmpDir)).toHaveLength(0);
+  });
+});
+
+describe('active task snapshots', () => {
+  it('persists and reloads the current active snapshot', () => {
+    initStore(tmpDir);
+
+    const saved = saveActiveTaskSnapshot(tmpDir, {
+      task: 'Finish SQLite migration hardening',
+      summary: 'Build, tests, and smoke pass locally.',
+      next_step: 'Implement active session resume snapshot support.',
+      source: 'test',
+    });
+
+    const loaded = loadActiveTaskSnapshot(tmpDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.id).toBe(saved.id);
+    expect(loaded!.task).toBe('Finish SQLite migration hardening');
+    expect(loaded!.summary).toBe('Build, tests, and smoke pass locally.');
+    expect(loaded!.next_step).toBe('Implement active session resume snapshot support.');
+    expect(loaded!.status).toBe('active');
+
+    const mirrorPath = path.join(tmpDir, 'buffer', 'active-task.md');
+    expect(fs.existsSync(mirrorPath)).toBe(true);
+    expect(fs.readFileSync(mirrorPath, 'utf8')).toContain('Implement active session resume snapshot support.');
+  });
+
+  it('supersedes the previous active snapshot when a new one is saved', () => {
+    initStore(tmpDir);
+
+    const first = saveActiveTaskSnapshot(tmpDir, {
+      task: 'First task',
+      summary: 'First summary',
+      next_step: 'First next step',
+      source: 'test',
+    });
+
+    const second = saveActiveTaskSnapshot(tmpDir, {
+      task: 'Second task',
+      summary: 'Second summary',
+      next_step: 'Second next step',
+      source: 'test',
+    });
+
+    const loaded = loadActiveTaskSnapshot(tmpDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.id).toBe(second.id);
+    expect(loaded!.task).toBe('Second task');
+
+    const db = openHippoDb(tmpDir);
+    try {
+      const row = db.prepare('SELECT status FROM task_snapshots WHERE id = ?').get(first.id) as { status?: string } | undefined;
+      expect(row?.status).toBe('superseded');
+    } finally {
+      closeHippoDb(db);
+    }
+  });
+
+  it('clears the active snapshot and removes the mirror file', () => {
+    initStore(tmpDir);
+
+    saveActiveTaskSnapshot(tmpDir, {
+      task: 'Task to clear',
+      summary: 'Some progress',
+      next_step: 'Nothing else',
+      source: 'test',
+    });
+
+    expect(clearActiveTaskSnapshot(tmpDir)).toBe(true);
+    expect(loadActiveTaskSnapshot(tmpDir)).toBeNull();
+    expect(fs.existsSync(path.join(tmpDir, 'buffer', 'active-task.md'))).toBe(false);
   });
 });

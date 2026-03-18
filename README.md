@@ -102,6 +102,23 @@ hippo capture --file conversation.md
 hippo capture --file conversation.md --dry-run
 ```
 
+### Active task snapshots
+
+Long-running work needs short-term continuity, not just long-term memory. Hippo can persist the current in-flight task so a later `continue` has something concrete to recover.
+
+```bash
+hippo snapshot save \
+  --task "Ship SQLite backbone" \
+  --summary "Tests/build/smoke are green, next slice is active-session recovery" \
+  --next-step "Implement active snapshot retrieval in context output"
+
+hippo snapshot show
+hippo context --auto --budget 1500
+hippo snapshot clear
+```
+
+`hippo context --auto` includes the active task snapshot before long-term memories, so agents get both the immediate thread and the deeper lessons.
+
 ---
 
 ## How It Works
