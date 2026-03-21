@@ -19,7 +19,7 @@ import {
 import { search, markRetrieved, estimateTokens } from '../search.js';
 import { loadAllEntries, writeEntry, readEntry, initStore, loadActiveTaskSnapshot, listMemoryConflicts } from '../store.js';
 import { consolidate } from '../consolidate.js';
-import { fetchGitLog, extractLessons, deduplicateLesson } from '../autolearn.js';
+import { fetchGitLog, extractLessons, deduplicateLesson, isGitRepo } from '../autolearn.js';
 import { loadConfig } from '../config.js';
 import { resolveConfidence } from '../memory.js';
 
@@ -304,8 +304,9 @@ function executeTool(name: string, args: Record<string, unknown>): string {
 
     case 'hippo_learn': {
       const days = Number(args.days) || 7;
+      if (!isGitRepo(process.cwd())) return 'No git history found.';
       const gitLog = fetchGitLog(process.cwd(), days);
-      if (!gitLog) return 'No git history found.';
+      if (!gitLog.trim()) return 'No fix/revert/bug commits found in the specified period.';
       const lessons = extractLessons(gitLog, config.gitLearnPatterns);
       let added = 0;
       let skipped = 0;

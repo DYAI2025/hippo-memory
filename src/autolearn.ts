@@ -130,6 +130,23 @@ export function runWatched(command: string): Promise<{ exitCode: number; stderr:
 }
 
 /**
+ * Check whether a directory is a git work tree.
+ */
+export function isGitRepo(cwd: string): boolean {
+  try {
+    const raw = execSync('git rev-parse --is-inside-work-tree', {
+      encoding: 'utf8',
+      cwd,
+      timeout: 10000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return raw.trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Fetch recent git log lines (subject lines only).
  * days: how many days of history to include.
  */

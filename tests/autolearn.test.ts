@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { captureError, extractLessons, deduplicateLesson } from '../src/autolearn.js';
+import { execSync } from 'child_process';
+import { captureError, extractLessons, deduplicateLesson, fetchGitLog, isGitRepo } from '../src/autolearn.js';
 import { initStore, writeEntry } from '../src/store.js';
 import { createMemory } from '../src/memory.js';
 
@@ -153,6 +154,44 @@ describe('HOOKS config', () => {
 // ---------------------------------------------------------------------------
 // deduplicateLesson
 // ---------------------------------------------------------------------------
+
+describe('git repo detection', () => {
+  it('treats an empty recent history window as a real git repo, not a missing repo', () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hippo-gitlog-'));
+
+    try {
+      execSync('git init', { cwd: repoDir, stdio: 'ignore' });
+      execSync('git config user.name "Test User"', { cwd: repoDir, stdio: 'ignore' });
+      execSync('git config user.email "test@example.com"', { cwd: repoDir, stdio: 'ignore' });
+      fs.writeFileSync(path.join(repoDir, 'README.md'), 'hello\n');
+      execSync('git add README.md', { cwd: repoDir, stdio: 'ignore' });
+      execSync('git commit -m "docs: old commit"', {
+        cwd: repoDir,
+        stdio: 'ignore',
+        env: {
+          ...process.env,
+          GIT_AUTHOR_DATE: '2020-01-01T00:00:00Z',
+          GIT_COMMITTER_DATE: '2020-01-01T00:00:00Z',
+        },
+      });
+
+      expect(isGitRepo(repoDir)).toBe(true);
+      expect(fetchGitLog(repoDir, 1)).toBe('');
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns false for a non-git directory', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hippo-not-git-'));
+
+    try {
+      expect(isGitRepo(dir)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('deduplicateLesson', () => {
   let tmpDir: string;

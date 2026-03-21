@@ -65,6 +65,7 @@ import {
   deduplicateLesson,
   runWatched,
   fetchGitLog,
+  isGitRepo,
 } from './autolearn.js';
 import {
   getGlobalRoot,
@@ -1004,9 +1005,14 @@ function learnFromRepo(
 ): { added: number; skipped: number } {
   const prefix = label ? `[${label}] ` : '';
 
+  if (!isGitRepo(repoPath)) {
+    console.log(`${prefix}No git history found (or not a git repository).`);
+    return { added: 0, skipped: 0 };
+  }
+
   const gitLog = fetchGitLog(repoPath, days);
   if (!gitLog.trim()) {
-    console.log(`${prefix}No git history found (or not a git repository).`);
+    console.log(`${prefix}No fix/revert/bug commits found in the specified period.`);
     return { added: 0, skipped: 0 };
   }
 
