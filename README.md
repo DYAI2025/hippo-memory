@@ -579,11 +579,9 @@ Issues and PRs welcome. Before contributing, run `hippo status` in the repo root
 
 The interesting problems:
 - Better consolidation heuristics (what makes a good semantic memory?)
-- Embedding-based search (currently BM25 only)
-- MCP server wrapper
-- Conflict detection between semantic memories
 - Schema acceleration (fast-track memories that fit existing patterns)
 - Multi-agent shared memory with attribution
+- Benchmark eval: memory-augmented agent vs static memory vs no memory
 
 ## License
 

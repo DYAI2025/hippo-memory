@@ -16,7 +16,7 @@ import {
   applyOutcome,
   calculateStrength,
 } from '../memory.js';
-import { search, markRetrieved, estimateTokens } from '../search.js';
+import { search, hybridSearch, markRetrieved, estimateTokens } from '../search.js';
 import { loadAllEntries, writeEntry, readEntry, initStore, loadActiveTaskSnapshot, listMemoryConflicts } from '../store.js';
 import { consolidate } from '../consolidate.js';
 import { fetchGitLog, extractLessons, deduplicateLesson, isGitRepo } from '../autolearn.js';
@@ -170,7 +170,7 @@ let lastRecalledIds: string[] = [];
 
 // ── Tool execution ──
 
-function executeTool(name: string, args: Record<string, unknown>): string {
+async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
   const hippoRoot = findHippoRoot();
   if (!hippoRoot) return 'No .hippo/ store found. Run: hippo init';
 
@@ -181,7 +181,7 @@ function executeTool(name: string, args: Record<string, unknown>): string {
       const query = String(args.query || '');
       const budget = Number(args.budget) || config.defaultBudget;
       const entries = loadAllEntries(hippoRoot);
-      const results = search(query, entries, { budget, hippoRoot });
+      const results = await hybridSearch(query, entries, { budget, hippoRoot });
 
       // Mark retrieved and persist
       const retrieved = markRetrieved(results.map((r) => r.entry));
@@ -253,7 +253,7 @@ function executeTool(name: string, args: Record<string, unknown>): string {
       if (!query) query = 'project context general';
 
       const entries = loadAllEntries(hippoRoot);
-      const results = search(query, entries, { budget, hippoRoot });
+      const results = await hybridSearch(query, entries, { budget, hippoRoot });
       const retrieved = markRetrieved(results.map((r) => r.entry));
       for (const entry of retrieved) writeEntry(hippoRoot, entry);
       lastRecalledIds = retrieved.map((e) => e.id);
@@ -332,7 +332,7 @@ function executeTool(name: string, args: Record<string, unknown>): string {
 
 // ── Request handling ──
 
-function handleRequest(req: McpRequest): McpResponse {
+async function handleRequest(req: McpRequest): Promise<McpResponse> {
   const { id, method, params } = req;
 
   switch (method) {
@@ -343,7 +343,7 @@ function handleRequest(req: McpRequest): McpResponse {
         result: {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'hippo-memory', version: '0.6.3' },
+          serverInfo: { name: 'hippo-memory', version: '0.7.0' },
         },
       };
 
@@ -356,7 +356,7 @@ function handleRequest(req: McpRequest): McpResponse {
     case 'tools/call': {
       const toolName = (params as any)?.name;
       const toolArgs = (params as any)?.arguments ?? {};
-      const output = executeTool(toolName, toolArgs);
+      const output = await executeTool(toolName, toolArgs);
       return {
         jsonrpc: '2.0',
         id,
@@ -404,8 +404,7 @@ process.stdin.on('data', (chunk: string) => {
     try {
       const req = JSON.parse(body) as McpRequest;
       if (req.method && !req.method.startsWith('notifications/')) {
-        const res = handleRequest(req);
-        send(res);
+        handleRequest(req).then(send);
       } else if (req.method) {
         handleRequest(req);
       }

@@ -111,6 +111,7 @@ export interface SearchResult {
   entry: MemoryEntry;
   score: number;          // composite score
   bm25: number;
+  cosine: number;         // cosine similarity (0 when embeddings not used)
   tokens: number;
 }
 
@@ -180,14 +181,16 @@ export async function hybridSearch(
 
     let compositeScore: number;
 
+    let cosineScore = 0;
+
     if (useEmbeddings) {
       const cached = embeddingIndex[entries[i].id];
-      const cosine = cached && queryVector.length > 0
-        ? cosineSimilarity(queryVector, cached)
+      cosineScore = cached && queryVector.length > 0
+        ? Math.max(0, cosineSimilarity(queryVector, cached))
         : 0;
 
       // Hybrid: weighted blend, then modulated by strength and recency
-      const hybrid = bm25Weight * normBm25 + embeddingWeight * Math.max(0, cosine);
+      const hybrid = bm25Weight * normBm25 + embeddingWeight * cosineScore;
       compositeScore = hybrid * (0.5 + 0.5 * strength) * (0.8 + 0.2 * recency);
     } else {
       // Pure BM25 path: identical to original behavior
@@ -198,7 +201,7 @@ export async function hybridSearch(
     if (compositeScore <= 0) continue;
 
     const tokens = estimateTokens(entries[i].content);
-    scored.push({ entry: entries[i], score: compositeScore, bm25: rawBm25, tokens });
+    scored.push({ entry: entries[i], score: compositeScore, bm25: rawBm25, cosine: cosineScore, tokens });
   }
 
   // Sort by composite score descending
@@ -259,7 +262,7 @@ export function search(
 
     const tokens = estimateTokens(entries[i].content);
 
-    scored.push({ entry: entries[i], score: composite, bm25, tokens });
+    scored.push({ entry: entries[i], score: composite, bm25, cosine: 0, tokens });
   }
 
   // Sort by composite score descending

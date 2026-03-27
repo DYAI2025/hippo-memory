@@ -49,6 +49,7 @@ export {
   initGlobal,
   promoteToGlobal,
   searchBoth,
+  searchBothHybrid,
   syncGlobalToLocal,
 } from './shared.js';
 

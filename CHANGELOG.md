@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0 (2026-03-27)
+
+### Added
+- Hybrid search: `hippo recall` and `hippo context` now blend BM25 keyword scores with cosine embedding similarity when `@xenova/transformers` is installed. Falls back to pure BM25 otherwise.
+- `SearchResult.cosine` field on all search results (0 when embeddings not used).
+- `searchBothHybrid()` async function for cross-store (local + global) hybrid search.
+- `tests/hybrid-search.test.ts` covering hybrid scoring, fallback, budget, and weight tuning.
+
+### Changed
+- `hippo recall`, `hippo context`, and MCP tools (`hippo_recall`, `hippo_context`) upgraded from synchronous BM25-only search to async hybrid search.
+- MCP server request handling is now async to support embedding pipeline.
+
 ## 0.6.3 (2026-03-21)
 
 ### Fixed

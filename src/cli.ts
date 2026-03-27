@@ -76,6 +76,7 @@ import {
   initGlobal,
   promoteToGlobal,
   searchBoth,
+  searchBothHybrid,
   syncGlobalToLocal,
 } from './shared.js';
 import {
@@ -336,11 +337,11 @@ function cmdRemember(
   }
 }
 
-function cmdRecall(
+async function cmdRecall(
   hippoRoot: string,
   query: string,
   flags: Record<string, string | boolean | string[]>
-): void {
+): Promise<void> {
   requireInit(hippoRoot);
 
   const budget = parseInt(String(flags['budget'] ?? '4000'), 10);
@@ -354,11 +355,10 @@ function cmdRecall(
 
   let results;
   if (hasGlobal) {
-    // Use searchBoth for merged results
-    const merged = searchBoth(query, hippoRoot, globalRoot, { budget });
-    results = merged;
+    // Use searchBothHybrid for merged results with embedding support
+    results = await searchBothHybrid(query, hippoRoot, globalRoot, { budget });
   } else {
-    results = search(query, localEntries, { budget });
+    results = await hybridSearch(query, localEntries, { budget, hippoRoot });
   }
 
   if (results.length === 0) {
@@ -800,11 +800,11 @@ function cmdSession(
   process.exit(1);
 }
 
-function cmdContext(
+async function cmdContext(
   hippoRoot: string,
   args: string[],
   flags: Record<string, string | boolean | string[]>
-): void {
+): Promise<void> {
   requireInit(hippoRoot);
 
   const budget = parseInt(String(flags['budget'] ?? '1500'), 10);
@@ -872,7 +872,7 @@ function cmdContext(
   } else {
     let results;
     if (hasGlobal) {
-      const merged = searchBoth(query, hippoRoot, globalRoot, { budget });
+      const merged = await searchBothHybrid(query, hippoRoot, globalRoot, { budget });
       const localIndex = loadIndex(hippoRoot);
       results = merged.map((r) => ({
         entry: r.entry,
@@ -881,7 +881,7 @@ function cmdContext(
         isGlobal: !localIndex.entries[r.entry.id],
       }));
     } else {
-      results = search(query, localEntries, { budget }).map((r) => ({
+      results = (await hybridSearch(query, localEntries, { budget, hippoRoot })).map((r) => ({
         entry: r.entry,
         score: r.score,
         tokens: r.tokens,
@@ -1662,7 +1662,7 @@ async function main(): Promise<void> {
         console.error('Please provide a search query.');
         process.exit(1);
       }
-      cmdRecall(hippoRoot, query, flags);
+      await cmdRecall(hippoRoot, query, flags);
       break;
     }
 
@@ -1711,7 +1711,7 @@ async function main(): Promise<void> {
     }
 
     case 'context':
-      cmdContext(hippoRoot, args, flags);
+      await cmdContext(hippoRoot, args, flags);
       break;
 
     case 'hook':

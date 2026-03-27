@@ -261,7 +261,7 @@ Ship the smallest thing that demonstrates the core insight (decay + retrieval st
 - [x] MCP server parity for snapshots/status
 
 ### Out (v0.2+):
-- [ ] Embedding-based search (optional, needs model)
+- [x] Embedding-based hybrid search (BM25 + cosine, optional @xenova/transformers)
 - [ ] Schema acceleration
 - [ ] Web UI / dashboard
 - [ ] Multi-agent shared memory
