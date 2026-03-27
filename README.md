@@ -43,13 +43,13 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
-### What's new in this build
+### What's new in v0.8.0
 
-- **SQLite-first storage** with markdown/JSON mirrors for humans and git
-- **Active task snapshots** for bare `continue` recovery
-- **Session event trails** for short-term continuity across stops and resumes
-- **Persistent stale-memory lifecycle** during `hippo sleep`
-- **Conflict tracking** with `hippo conflicts` and `.hippo/conflicts/` mirrors
+- **Hybrid search** blends BM25 keywords with cosine embedding similarity. Install `@xenova/transformers`, run `hippo embed`, recall quality jumps. Falls back to BM25 otherwise.
+- **Schema acceleration** auto-computes how well new memories fit existing patterns. Familiar memories consolidate faster; novel ones decay faster if unused.
+- **Multi-agent shared memory** with `hippo share`, `hippo peers`, and transfer scoring. Universal lessons travel between projects; project-specific config stays local.
+- **Conflict resolution** via `hippo resolve <id> --keep <mem_id>`. Closes the detect-inspect-resolve loop.
+- **Agent eval benchmark** validates the learning hypothesis: hippo agents drop from 78% trap rate to 14% over a 50-task sequence.
 
 ### Zero-config agent integration
 
@@ -431,7 +431,17 @@ hippo watch "npm run build"
 | `hippo learn --git` | Scan recent git commits for lessons |
 | `hippo learn --git --days <n>` | Scan N days back (default: 7) |
 | `hippo learn --git --repos <paths>` | Scan multiple repos (comma-separated) |
+| `hippo conflicts` | List detected open memory conflicts |
+| `hippo conflicts --json` | Output conflicts as JSON |
+| `hippo resolve <id>` | Show both conflicting memories for comparison |
+| `hippo resolve <id> --keep <mem_id>` | Resolve: keep winner, weaken loser |
+| `hippo resolve <id> --keep <mem_id> --forget` | Resolve: keep winner, delete loser |
 | `hippo promote <id>` | Copy a local memory to the global store |
+| `hippo share <id>` | Share with attribution + transfer scoring |
+| `hippo share <id> --force` | Share even if transfer score is low |
+| `hippo share --auto` | Auto-share all high-scoring memories |
+| `hippo share --auto --dry-run` | Preview what would be shared |
+| `hippo peers` | List projects contributing to global store |
 | `hippo sync` | Pull global memories into local project |
 | `hippo hook list` | Show available framework hooks |
 | `hippo hook install <target>` | Install hook (claude-code, codex, cursor, openclaw) |
@@ -557,6 +567,11 @@ For how these mechanisms connect to LLM training, continual learning, and open r
 |---------|-------|------|-------------|-----------|
 | Decay by default | Yes | No | No | No |
 | Retrieval strengthening | Yes | No | No | No |
+| Hybrid search (BM25 + embeddings) | Yes | Embeddings only | No | No |
+| Schema acceleration | Yes | No | No | No |
+| Conflict detection + resolution | Yes | No | No | No |
+| Multi-agent shared memory | Yes | No | No | No |
+| Transfer scoring | Yes | No | No | No |
 | Outcome tracking | Yes | No | No | No |
 | Confidence tiers | Yes | No | No | No |
 | Cross-tool import | Yes | No | No | No |
@@ -569,7 +584,7 @@ For how these mechanisms connect to LLM training, continual learning, and open r
 | Git-friendly | Yes | No | Yes | No |
 | Framework agnostic | Yes | Partial | Yes | No |
 
-Mem0, Basic Memory, and Claude-Mem all implement "save everything, search later." Hippo is the only one that models what memories are worth keeping, and the only one that lets you bring memories from other tools.
+Mem0, Basic Memory, and Claude-Mem all implement "save everything, search later." Hippo implements 6 of 7 hippocampal mechanisms: two-speed storage, decay, retrieval strengthening, schema acceleration, conflict detection, and multi-agent transfer. It's the only tool that models what memories are worth keeping.
 
 ---
 
@@ -578,10 +593,10 @@ Mem0, Basic Memory, and Claude-Mem all implement "save everything, search later.
 Issues and PRs welcome. Before contributing, run `hippo status` in the repo root to see the project's own memory.
 
 The interesting problems:
-- Better consolidation heuristics (what makes a good semantic memory?)
-- Schema acceleration (fast-track memories that fit existing patterns)
-- Multi-agent shared memory with attribution
-- Benchmark eval: memory-augmented agent vs static memory vs no memory
+- Better consolidation heuristics (LLM-powered merge vs current text overlap)
+- Web UI / dashboard for visualizing decay curves and memory health
+- Optimal decay parameter tuning from real usage data
+- Cross-agent transfer learning evaluation
 
 ## License
 
