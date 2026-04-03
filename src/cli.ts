@@ -5,13 +5,14 @@
  * Commands:
  *   hippo init [--global]
  *   hippo remember <text> [--tag <t>] [--error] [--pin] [--global]
- *   hippo recall <query> [--budget <n>] [--json]
+ *   hippo recall <query> [--budget <n>] [--json] [--why]
  *   hippo sleep [--dry-run]
  *   hippo status
  *   hippo outcome --good | --bad [--id <id>]
  *   hippo conflicts [--status <status>] [--json]
  *   hippo snapshot <save|show|clear>
  *   hippo session <log|show>
+ *   hippo current <show>
  *   hippo forget <id>
  *   hippo inspect <id>
  *   hippo embed [--status]
@@ -58,7 +59,7 @@ import {
   TaskSnapshot,
   SessionEvent,
 } from './store.js';
-import { search, markRetrieved, estimateTokens, hybridSearch } from './search.js';
+import { search, markRetrieved, estimateTokens, hybridSearch, explainMatch } from './search.js';
 import { consolidate } from './consolidate.js';
 import {
   isEmbeddingAvailable,
@@ -359,6 +360,7 @@ async function cmdRecall(
   const budget = parseInt(String(flags['budget'] ?? '4000'), 10);
   const limit = flags['limit'] ? Math.max(1, parseInt(String(flags['limit']), 10) || Infinity) : Infinity;
   const asJson = Boolean(flags['json']);
+  const showWhy = Boolean(flags['why']);
   const globalRoot = getGlobalRoot();
 
   const localEntries = loadSearchEntries(hippoRoot, query);
@@ -402,14 +404,27 @@ async function cmdRecall(
   updateStats(hippoRoot, { recalled: results.length });
 
   if (asJson) {
-    const output = results.map((r) => ({
-      id: r.entry.id,
-      score: r.score,
-      strength: r.entry.strength,
-      tokens: r.tokens,
-      tags: r.entry.tags,
-      content: r.entry.content,
-    }));
+    const output = results.map((r) => {
+      const isGlobal = isInitialized(globalRoot) && !localIndex.entries[r.entry.id];
+      const base: Record<string, unknown> = {
+        id: r.entry.id,
+        score: r.score,
+        strength: r.entry.strength,
+        tokens: r.tokens,
+        tags: r.entry.tags,
+        content: r.entry.content,
+      };
+      if (showWhy) {
+        const explanation = explainMatch(query, r);
+        base.layer = r.entry.layer;
+        base.confidence = resolveConfidence(r.entry);
+        base.source = isGlobal ? 'global' : 'local';
+        base.reason = explanation.reason;
+        base.bm25 = r.bm25;
+        base.cosine = r.cosine;
+      }
+      return base;
+    });
     console.log(JSON.stringify({ query, budget, results: output, total: output.length }));
     return;
   }
@@ -422,9 +437,16 @@ async function cmdRecall(
     const conf = resolveConfidence(e);
     const confLabel = conf === 'stale' || conf === 'inferred' ? `[${conf}] \u26A0\uFE0F` : `[${conf}]`;
     const strengthBar = '\u2588'.repeat(Math.round(e.strength * 10)) + '\u2591'.repeat(10 - Math.round(e.strength * 10));
-    const globalMark = (isInitialized(globalRoot) && !loadIndex(hippoRoot).entries[e.id]) ? ' [global]' : '';
+    const isGlobal = isInitialized(globalRoot) && !localIndex.entries[e.id];
+    const globalMark = isGlobal ? ' [global]' : '';
+    const sourceMark = isGlobal ? ' [global]' : ' [local]';
     console.log(`--- ${e.id} [${e.layer}] ${confLabel}${globalMark} score=${fmt(r.score, 3)} strength=${fmt(e.strength)}`);
     console.log(`    [${strengthBar}] tags: ${e.tags.join(', ') || 'none'} | retrieved: ${e.retrieval_count}x`);
+    if (showWhy) {
+      const explanation = explainMatch(query, r);
+      console.log(`    source:${sourceMark} | layer: [${e.layer}] | confidence: [${conf}]`);
+      console.log(`    reason: ${explanation.reason}`);
+    }
     console.log();
     console.log(e.content);
     console.log();
@@ -869,6 +891,73 @@ function cmdSession(
   }
 
   console.error('Usage: hippo session <log|show>');
+  process.exit(1);
+}
+
+function cmdCurrent(
+  hippoRoot: string,
+  args: string[],
+  flags: Record<string, string | boolean | string[]>
+): void {
+  requireInit(hippoRoot);
+
+  const subcommand = args[0] ?? 'show';
+
+  if (subcommand === 'show') {
+    const asJson = Boolean(flags['json']);
+    const snapshot = loadActiveTaskSnapshot(hippoRoot);
+    const sessionId = snapshot?.session_id ?? undefined;
+    const events = listSessionEvents(hippoRoot, {
+      session_id: sessionId,
+      limit: 5,
+    });
+
+    if (asJson) {
+      console.log(JSON.stringify({
+        snapshot: snapshot ?? null,
+        events: events.map((ev) => ({
+          id: ev.id,
+          session_id: ev.session_id,
+          event_type: ev.event_type,
+          content: ev.content,
+          created_at: ev.created_at,
+        })),
+      }));
+      return;
+    }
+
+    if (!snapshot && events.length === 0) {
+      console.log('No active task or recent session events.');
+      return;
+    }
+
+    console.log('# Current State\n');
+
+    if (snapshot) {
+      console.log(`Task: ${snapshot.task}`);
+      console.log(`Status: ${snapshot.status} | Source: ${snapshot.source} | Updated: ${snapshot.updated_at}`);
+      if (snapshot.session_id) {
+        console.log(`Session: ${snapshot.session_id}`);
+      }
+      console.log(`Summary: ${snapshot.summary}`);
+      console.log(`Next: ${snapshot.next_step}`);
+    } else {
+      console.log('No active task snapshot.');
+    }
+
+    if (events.length > 0) {
+      console.log('');
+      console.log('Recent events:');
+      for (const ev of events) {
+        const ts = ev.created_at.slice(0, 19).replace('T', ' ');
+        console.log(`  [${ts}] (${ev.event_type}) ${ev.content}`);
+      }
+    }
+
+    return;
+  }
+
+  console.error('Usage: hippo current <show>');
   process.exit(1);
 }
 
@@ -1632,6 +1721,7 @@ Commands:
   recall <query>           Search and retrieve memories (local + global)
     --budget <n>           Token budget (default: 4000)
     --json                 Output as JSON
+    --why                  Show match reasons and source annotations
   context                  Smart context injection for AI agents
     --auto                 Auto-detect task from git state
     --budget <n>           Token budget (default: 1500)
@@ -1672,6 +1762,9 @@ Commands:
       --id <session-id>
       --task <task>
       --limit <n>          Event limit (default: 8)
+      --json               Output as JSON
+  current <sub>            Show compact current state for agent injection
+    current show           Active task + recent session events (default)
       --json               Output as JSON
   forget <id>              Force remove a memory
   inspect <id>             Show full memory detail
@@ -1792,6 +1885,10 @@ async function main(): Promise<void> {
 
     case 'session':
       cmdSession(hippoRoot, args, flags);
+      break;
+
+    case 'current':
+      cmdCurrent(hippoRoot, args, flags);
       break;
 
     case 'forget': {
