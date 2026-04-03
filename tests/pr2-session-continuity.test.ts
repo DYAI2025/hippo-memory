@@ -31,13 +31,13 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('schema v5 migration', () => {
-  it('migrates to schema version 5', () => {
+describe('schema v5+v6 migration', () => {
+  it('migrates to latest schema version', () => {
     initStore(tmpDir);
     const db = openHippoDb(tmpDir);
     try {
-      expect(getSchemaVersion(db)).toBe(5);
-      expect(getCurrentSchemaVersion()).toBe(5);
+      expect(getSchemaVersion(db)).toBe(6);
+      expect(getCurrentSchemaVersion()).toBe(6);
     } finally {
       closeHippoDb(db);
     }
