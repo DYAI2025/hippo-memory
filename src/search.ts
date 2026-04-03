@@ -15,7 +15,7 @@ import {
 // Tokenizer
 // ---------------------------------------------------------------------------
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^\w\s]/g, ' ')
@@ -299,6 +299,62 @@ export function markRetrieved(entries: MemoryEntry[], now: Date = new Date()): M
     updated.strength = calculateStrength(updated, now);
     return updated;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Match explanation (--why support)
+// ---------------------------------------------------------------------------
+
+export interface MatchExplanation {
+  /** Human-readable reason string */
+  reason: string;
+  /** Which query terms matched in the document (BM25 component) */
+  matchedTerms: string[];
+  /** Whether BM25 contributed to the score */
+  hasBm25: boolean;
+  /** Whether embedding similarity contributed to the score */
+  hasEmbedding: boolean;
+  /** Raw cosine similarity (0 when embeddings not used) */
+  cosineSimilarity: number;
+}
+
+/**
+ * Explain why a search result matched a query.
+ * Computes which query terms overlapped with the document and whether
+ * BM25 and/or embedding similarity contributed to the composite score.
+ */
+export function explainMatch(query: string, result: SearchResult): MatchExplanation {
+  const queryTerms = new Set(tokenize(query));
+  const docTerms = new Set(tokenize(`${result.entry.content} ${result.entry.tags.join(' ')}`));
+
+  const matchedTerms: string[] = [];
+  for (const term of queryTerms) {
+    if (docTerms.has(term)) {
+      matchedTerms.push(term);
+    }
+  }
+
+  const hasBm25 = result.bm25 > 0;
+  const hasEmbedding = result.cosine > 0;
+
+  const parts: string[] = [];
+  if (hasBm25) {
+    parts.push(`BM25: matched terms [${matchedTerms.join(', ')}]`);
+  }
+  if (hasEmbedding) {
+    parts.push(`embedding similarity: ${result.cosine.toFixed(3)}`);
+  }
+  if (parts.length === 0) {
+    parts.push('no direct term or embedding match');
+  }
+
+  return {
+    reason: parts.join('; '),
+    matchedTerms,
+    hasBm25,
+    hasEmbedding,
+    cosineSimilarity: result.cosine,
+  };
 }
 
 /**
