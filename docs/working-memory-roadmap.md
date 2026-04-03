@@ -1,371 +1,341 @@
-# Hippo Roadmap: Explicit Working Memory + Session Continuity
+# Hippo Roadmap: Explicit Working Memory, Session Continuity, and Operational Stability
 
-## Why this exists
-Hippo is already good at long-term semantic recall, reinforcement, and decay. The current gap is the layer above that: active task continuity, session continuity, and adoption polish.
+## Why this roadmap changed
+The first draft was directionally right but too generic.
+After inspecting the real `hippo` repo, the immediate gaps are narrower and the best first PR is smaller.
 
-This plan adds a Karpathy-style explicit working-memory layer on top of Hippo instead of replacing Hippo with markdown.
+Hippo is already stronger than a plain markdown-memory system in long-term recall. The weak spots are:
+- active task continuity
+- session continuity and handoff polish
+- SQLite lock behaviour under concurrent plugin calls
+- explainability and ergonomics around recall and handoff
 
-## Target architecture
-Use four layers:
-
-1. **Working memory layer**
-   - visible, file-backed, current-task state
-   - answers: what am I doing right now?
-2. **Session continuity layer**
-   - resumable session capsules and handoff artifacts
-   - answers: what was I doing before reset, crash, cron wake, or subagent exit?
-3. **Long-term Hippo memory layer**
-   - semantic recall, reinforcement, decay
-   - answers: what have I learned over time?
-4. **Recall and handoff UX layer**
-   - explainability, scoped recall, inspectable handoffs
-   - answers: why was this memory returned, and what should I do next?
-
-## Repo shape assumption
-Current repo shape is intentionally small. Keep the existing MCP/server surface stable and add focused modules behind it.
-
-Use the existing `src/mcp` area as the integration point, not the dumping ground.
-New functionality should live in dedicated modules first, then get exposed to MCP and CLI.
+The right move is still to incorporate Karpathy-style explicit working state, but **not** as PR1.
+PR1 should fix production pain first.
 
 ---
 
-# Phase 1: Working memory layer
+## Current repo reality
+The repo is in better shape than a greenfield memory project.
+It already has:
+- SQLite backbone
+- schema v4
+- WAL mode already enabled at the DB level
+- BM25 + embedding hybrid retrieval
+- `task_snapshots` and `session_events` tables already present
+- a working OpenClaw plugin/tool surface
+
+That means the roadmap should build on existing structure, not duplicate it.
+
+---
+
+## Design stance
+Use a hybrid memory model:
+
+1. **Explicit working state** for current-task continuity
+2. **Session/handoff artifacts** for resume and background runs
+3. **Hippo long-term semantic memory** for durable recall
+4. **Explainable recall UX** so the system is easy to trust
+
+Karpathy-style memory should become Hippo's **front-end working state layer**.
+Hippo should remain the **semantic long-term retrieval engine** underneath.
+
+---
+
+# Priority order
+
+## PR1: Operational stability and UX guardrails
+Ship this first.
+
+### Why PR1 is not the full working-memory layer
+The most immediate production pain is not lack of a buffer. It is:
+- `SQLITE_BUSY` contention under concurrent plugin calls
+- missing `--limit` controls on recall/context
+- duplicate context injection on reconnect
+
+Those are small, high-leverage fixes that unblock everything else.
+
+### PR1 scope
+1. **SQLite lock hardening**
+   - add `PRAGMA busy_timeout = 5000`
+   - add `PRAGMA synchronous = NORMAL`
+   - add `PRAGMA wal_autocheckpoint = 100`
+   - apply these in `openHippoDb`
+
+2. **Consolidation write batching**
+   - stop doing many open/close cycles during `consolidate()`
+   - batch writes into one connection and one transaction where possible
+
+3. **Recall/context limits**
+   - add `--limit` flag to `recall`
+   - add `--limit` flag to `context`
+
+4. **Plugin injection dedup guard**
+   - prevent double injection of context on reconnect or repeated hook entry
+
+### Likely files to touch in PR1
+Exact names should follow the current repo layout, but expect changes around:
+- DB open/connection helper, e.g. `openHippoDb`
+- consolidation path
+- recall/context command parsing
+- OpenClaw plugin hook path for `before_prompt_build`
+
+### PR1 acceptance checklist
+- [ ] concurrent plugin reads/writes no longer fail immediately with `SQLITE_BUSY`
+- [ ] recall supports `--limit`
+- [ ] context supports `--limit`
+- [ ] repeated reconnect/hook execution does not inject duplicate context
+- [ ] one integration test proves busy-timeout behaviour under concurrent access
+- [ ] one integration test proves deduped plugin injection
+
+### PR1 size target
+Keep it small.
+This should be a low-risk patch, roughly a few focused edits, not a repo-wide architecture rewrite.
+
+---
+
+# PR2: Session continuity and handoff surface
+After stability, make session state resumable.
 
 ## Goal
-Make the current task explicit, inspectable, and easy to resume.
+Turn the existing `task_snapshots` and `session_events` foundations into an actual continuity system.
 
-## New on-disk state
-For each repo or working directory, create a hidden `.hippo/work/` folder with:
+## Current gap
+The tables exist, but the flow is incomplete:
+- no proper session start/end lifecycle
+- no robust auto-generated session id when plugin context is null
+- no first-class `hippo handoff` command that emits a ready-to-inject summary block
 
-### `.hippo/work/current.md`
-Human-readable snapshot.
+## What to add
+### New type
+- `SessionHandoff`
 
-Suggested sections:
-- Objective
-- Current subtask
-- Blockers
-- Next action
-- Touched files
-- Verification pending
+Suggested shape:
 
-### `.hippo/work/state.json`
-Machine-readable state.
-
-```json
-{
-  "version": 1,
-  "repoRoot": "C:/repo",
-  "taskId": "wm-20260403-001",
-  "title": "Add working memory layer",
-  "objective": "Make active task state explicit and resumable",
-  "status": "active",
-  "currentSubtask": "Define state schema",
-  "blockers": [],
-  "nextAction": "Implement store + serializer",
-  "touchedFiles": [
-    "src/working-memory/schema.ts"
-  ],
-  "lastCommand": "npm test",
-  "lastVerifiedStep": "schema roundtrip test passes",
-  "updatedAt": "2026-04-03T09:00:00Z"
+```ts
+interface SessionHandoff {
+  version: 1;
+  sessionId: string;
+  repoRoot?: string;
+  taskId?: string;
+  summary: string;
+  nextAction?: string;
+  artifacts?: string[];
+  updatedAt: string;
 }
 ```
 
-### `.hippo/work/checkpoints.jsonl`
-Append-only milestone log.
+### New commands
+- `hippo handoff create`
+- `hippo handoff latest`
+- `hippo handoff show <id>`
+- `hippo session latest`
+- `hippo session resume`
 
-```json
-{"ts":"2026-04-03T09:00:00Z","kind":"checkpoint","step":"defined state schema","files":["src/working-memory/schema.ts"]}
-{"ts":"2026-04-03T09:10:00Z","kind":"verify","step":"schema roundtrip test passes"}
-```
+### Plugin behaviour
+- record explicit `session_start`
+- record explicit `session_end`
+- if session context is missing, generate a stable fallback session id
+- inject latest handoff summary at `before_prompt_build` when appropriate
 
-## New source files
-Create:
-- `src/working-memory/schema.ts`
-- `src/working-memory/store.ts`
-- `src/working-memory/render.ts`
-- `src/working-memory/checkpoints.ts`
-- `src/working-memory/index.ts`
+### Likely files/modules
+Add or extend modules in the current command/session area, for example:
+- `src/session/*`
+- `src/handoff/*`
+- plugin hook integration under the OpenClaw-facing layer
 
-If the repo already has a general filesystem/path helper area, place them under that pattern instead.
-
-## Commands to add
-### CLI
-- `hippo current init --repo <path> --title <text> --objective <text>`
-- `hippo current show --repo <path>`
-- `hippo current set --repo <path> --subtask <text> --next <text>`
-- `hippo current checkpoint --repo <path> --step <text> [--files a,b,c]`
-- `hippo current close --repo <path> --summary <text>`
-
-### MCP tools
-- `hippo_current_show`
-- `hippo_current_set`
-- `hippo_current_checkpoint`
-
-## Integration rule
-On agent session start:
-1. load `current.md`
-2. load `state.json`
-3. then run long-term `hippo_recall`
-
-That ordering matters. Active state first, semantic memory second.
+### Acceptance checklist
+- [ ] a session can be started and closed explicitly
+- [ ] a missing plugin session context no longer drops continuity data on the floor
+- [ ] `hippo handoff latest` returns a compact, ready-to-inject summary
+- [ ] the plugin can resume from the latest session/handoff without transcript archaeology
 
 ---
 
-# Phase 2: Session continuity layer
+# PR3: Explicit working-memory layer
+Do this after stability and basic session continuity.
 
 ## Goal
-Survive `/new`, compaction, crash, cron wake, and subagent exit.
+Make current task state explicit, bounded, and model-visible.
 
-## New on-disk state
-Use `.hippo/sessions/`.
+## Current gap
+A `Layer.Buffer` concept already exists, but nothing writes to it automatically or exposes it cleanly as first-class working memory.
 
-### `.hippo/sessions/<session-id>.json`
-```json
-{
-  "version": 1,
-  "sessionId": "sess-20260403-001",
-  "repoRoot": "C:/repo",
-  "taskId": "wm-20260403-001",
-  "status": "paused",
-  "summary": "Working memory schema implemented, MCP exposure not started",
-  "nextAction": "Add hippo_current_show MCP tool",
-  "evidence": [
-    ".hippo/work/current.md",
-    ".hippo/work/checkpoints.jsonl"
-  ],
-  "updatedAt": "2026-04-03T09:15:00Z"
-}
+## Proposed storage
+Add a dedicated `working_memory` table in a new migration, likely **schema v5**.
+
+Suggested shape:
+
+```sql
+CREATE TABLE working_memory (
+  id INTEGER PRIMARY KEY,
+  scope TEXT NOT NULL,
+  session_id TEXT,
+  task_id TEXT,
+  importance REAL NOT NULL DEFAULT 0,
+  content TEXT NOT NULL,
+  metadata_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 ```
 
-### `.hippo/handoffs/<handoff-id>.json`
-```json
-{
-  "version": 1,
-  "handoffId": "handoff-20260403-001",
-  "repoRoot": "C:/repo",
-  "taskId": "wm-20260403-001",
-  "from": "background-run",
-  "status": "partial",
-  "whatShipped": [],
-  "whatFailed": [
-    {
-      "step": "MCP registration",
-      "reason": "type mismatch"
-    }
-  ],
-  "nextAction": "fix tool registration types and rerun unit tests",
-  "artifacts": [
-    ".hippo/work/current.md"
-  ],
-  "updatedAt": "2026-04-03T09:20:00Z"
-}
-```
+## Proposed module
+Add:
+- `src/working-memory.ts`
 
-## New source files
-Create:
-- `src/session/schema.ts`
-- `src/session/store.ts`
-- `src/session/handoff.ts`
-- `src/session/index.ts`
+Core functions:
+- `wmPush(...)`
+- `wmFlush(...)`
+- `wmRead(...)`
+- `wmClear(...)`
+
+## Behaviour
+- bounded buffer
+- importance-based eviction
+- target max of about 20 entries
+- auto-flush on `session_end`
+- working memory is for current-state notes, not durable semantic memories
 
 ## Commands to add
-### CLI
-- `hippo session save --repo <path>`
-- `hippo session latest --repo <path>`
-- `hippo session resume --repo <path>`
-- `hippo handoff create --repo <path> --status <status> --next <text>`
-- `hippo handoff read --id <handoff-id>`
+- `hippo wm push`
+- `hippo wm read`
+- `hippo wm clear`
+- `hippo wm flush`
 
-### MCP tools
-- `hippo_session_latest`
-- `hippo_handoff_read`
+## Tool/plugin surface
+Add one minimal tool first:
+- `hippo_wm_push`
 
-## Integration rule
-Every subagent/background run should end by writing a handoff artifact.
-No more transcript archaeology as the primary resume mechanism.
+Potential follow-ups:
+- `hippo_wm_read`
+- automatic inclusion of top working-memory items in prompt context before semantic recall
+
+## Acceptance checklist
+- [ ] bounded buffer works
+- [ ] eviction works by importance
+- [ ] session end flush works
+- [ ] current-state notes are visible separately from long-term memory recall
 
 ---
 
-# Phase 3: Lock/contention fix
+# PR4: Recall and handoff UX polish
+Once the foundations exist, make the system easy to trust.
 
-## Goal
-Stop SQLite lock hangs and convert learn/sleep from fragile to robust.
+## Current gaps
+- no `--limit` before PR1
+- no top-level handoff surface
+- no match-reason annotations
+- weak inspectability of why a memory was returned
 
-## Observed problem
-`hippo sleep` can hit `database is locked` while the gateway still holds the DB open. Current workaround avoids false FAIL alerts, but the underlying contention is still real.
+## Additions
+### Explainable recall
+Add:
+- `hippo recall --why`
 
-## Design changes
-Create or centralize DB access through:
-- `src/db/connection.ts`
-- `src/db/pragmas.ts`
-- `src/db/write-queue.ts`
-
-## Required DB behaviour
-### Pragmas
-Apply on connection open:
-- `journal_mode=WAL`
-- `busy_timeout=5000` or configurable
-- `synchronous=NORMAL`
-
-### Writer model
-- one write queue for learn/consolidate operations
-- short-lived read connections for recall
-- avoid long-held DB handles in prompt hooks
-
-### Consolidation behaviour
-If DB is locked:
-- treat as `DEFERRED`, not hard failure
-- emit a structured status
-- retry later from queue
-
-### Metrics to add
-Store and expose:
-- lock wait ms
-- deferred consolidate count
-- queue depth
-- connection open duration
-
-## New source files
-Create or refactor into:
-- `src/db/connection.ts`
-- `src/db/write-queue.ts`
-- `src/learn/consolidate.ts`
-- `src/learn/status.ts`
-
-## Commands to add
-- `hippo admin db-status`
-- `hippo admin deferred-learns`
-- `hippo admin retry-deferred`
-
----
-
-# Phase 4: Better recall and handoff UX
-
-## Goal
-Make Hippo inspectable and easy to trust.
-
-## Commands to add
-- `hippo recall <query> --why`
-- `hippo recall <query> --repo <path>`
-- `hippo current next --repo <path>`
-- `hippo handoff latest --repo <path>`
-
-## Output expectations
-### `hippo recall --why`
 Return:
 - memory text
-- why it matched
-- score/confidence
-- source bucket: active, recent, durable, decaying
-- stale flag if applicable
+- score
+- reason for match
+- source bucket, e.g. durable/recent/working/session
 
-### `hippo handoff latest`
-Return:
-- latest handoff summary
-- next step
-- linked artifacts
+### Better handoff UX
+- `hippo handoff latest`
+- `hippo current show` if working-memory layer lands
+- compact outputs meant to be injected directly into agent context
 
-## New source files
-Create:
-- `src/recall/explain.ts`
-- `src/recall/format.ts`
-- `src/handoff/format.ts`
+### Acceptance checklist
+- [ ] operator can inspect why recall returned an item
+- [ ] handoff output is compact and usable without extra formatting
+- [ ] working memory, session continuity, and long-term recall are visibly distinct concepts
 
 ---
 
-# First PR slice
+# Concrete roadmap sequence
 
-## PR1 name
-**Explicit working memory + handoff skeleton**
+## PR1 -- SHIPPED
+**Operational stability patch**
+- [x] busy_timeout
+- [x] synchronous NORMAL
+- [x] wal_autocheckpoint
+- [x] consolidate batching
+- [x] recall/context `--limit`
+- [x] plugin dedup guard
 
-## Why this first
-It gives the biggest practical improvement with the lowest risk.
-It does not require changing the DB layer yet.
-It immediately improves active-task continuity and session continuity.
+## PR2 -- SHIPPED
+**Session continuity + handoff**
+- [x] session start/end
+- [x] fallback session ids
+- [x] handoff commands
+- [x] handoff injection path
 
-## Scope
-### Add new modules
-- `src/working-memory/schema.ts`
-- `src/working-memory/store.ts`
-- `src/working-memory/render.ts`
-- `src/working-memory/checkpoints.ts`
-- `src/session/schema.ts`
-- `src/session/store.ts`
-- `src/session/handoff.ts`
+## PR3 -- SHIPPED
+**Working-memory layer**
+- [x] migration v6 (v5 was session_handoffs)
+- [x] `working_memory` table
+- [x] `src/working-memory.ts`
+- [x] `hippo wm` commands
+- [x] minimal `hippo_wm_push` tool
 
-### Expose commands
-- `hippo current init/show/set/checkpoint/close`
-- `hippo handoff create/read`
-
-### Minimal MCP exposure
-Only two tools in PR1:
-- `hippo_current_show`
-- `hippo_handoff_read`
-
-### Docs
-- update `README.md`
-- add examples for `.hippo/work/current.md`
-- document the handoff JSON schema
-
-## Not in PR1
-- WAL / busy_timeout / write queue
-- explainable recall
-- session auto-resume
-- migration of old memories
-- UI/browser views
-
-## PR1 acceptance checklist
-- [ ] `hippo current init` creates `.hippo/work/current.md`, `state.json`, and `checkpoints.jsonl`
-- [ ] `hippo current show` reads and prints current state reliably
-- [ ] `hippo current checkpoint` appends JSONL and refreshes `current.md`
-- [ ] `hippo handoff create` writes a valid handoff JSON artifact
-- [ ] MCP can read current state and latest handoff
-- [ ] repo-local working state survives process restarts
-- [ ] README documents the workflow with one end-to-end example
-
-## Suggested tests
-- roundtrip schema test for `state.json`
-- append test for `checkpoints.jsonl`
-- handoff schema validation test
-- `current.md` render snapshot test
-- one integration test that simulates:
-  1. init
-  2. set
-  3. checkpoint
-  4. handoff create
-  5. read back via CLI
+## PR4 -- SHIPPED
+**Recall/handoff UX polish**
+- [x] `recall --why`
+- [x] scoped/annotated outputs
+- [x] `hippo current show`
 
 ---
 
-# Concrete command examples after PR1
-```bash
-hippo current init --repo C:/Users/skf_s/hippo --title "working memory layer" --objective "make active task state explicit"
-hippo current set --repo C:/Users/skf_s/hippo --subtask "define schemas" --next "implement filesystem store"
-hippo current checkpoint --repo C:/Users/skf_s/hippo --step "schema roundtrip test passes" --files src/working-memory/schema.ts
-hippo handoff create --repo C:/Users/skf_s/hippo --status partial --next "register MCP tool"
-hippo current show --repo C:/Users/skf_s/hippo
-hippo handoff read --id handoff-20260403-001
-```
+# Concrete commands to target
+This is the command surface to grow toward.
 
----
+## PR1
+- `hippo recall <query> --limit 10`
+- `hippo context --limit 10`
 
-# Sequencing after PR1
 ## PR2
-Session save/latest/resume on top of the same `.hippo/` file layout.
+- `hippo handoff create`
+- `hippo handoff latest`
+- `hippo handoff show <id>`
+- `hippo session latest`
+- `hippo session resume`
 
 ## PR3
-SQLite lock/contention fix: WAL, busy timeout, writer queue, deferred consolidations.
+- `hippo wm push --scope repo --content "..." --importance 0.8`
+- `hippo wm read --scope repo`
+- `hippo wm clear --scope repo`
+- `hippo wm flush --scope repo`
 
 ## PR4
-Explainable recall and better handoff UX.
+- `hippo recall <query> --why --limit 5`
+
+---
+
+# Risks and guardrails
+
+## Risk: building working memory before fixing contention
+That would make a flaky write path even hotter.
+
+**Guardrail:** do PR1 first.
+
+## Risk: duplicating existing session tables with new ad hoc files
+That would create two broken continuity systems.
+
+**Guardrail:** build session continuity on top of `task_snapshots` and `session_events`, not beside them.
+
+## Risk: letting working memory become long-term memory sludge
+That would recreate the markdown-dump problem.
+
+**Guardrail:** bounded buffer + explicit flush semantics + separate long-term memory path.
 
 ---
 
 # Blunt recommendation
-Do **not** start with the DB lock fix as the main roadmap item.
-Start with explicit working memory and handoff artifacts first.
-That gives immediate user-visible value and makes the rest easier to debug.
+The repo is already strong enough that the right move is not a grand redesign.
 
-Karpathy-style memory should be Hippo's **front-end working state**.
-Hippo should stay the **semantic long-term retrieval engine** underneath.
+**Do this instead:**
+1. fix contention and immediate UX pain
+2. finish session continuity on top of the tables that already exist
+3. add explicit working memory as a bounded front-end layer
+4. improve explainability last
+
+That is the cleanest way to incorporate Karpathy-style memory into Hippo without breaking what already works.

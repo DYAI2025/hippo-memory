@@ -43,6 +43,18 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
+### What's new in v0.9.0
+
+- **Working memory layer** (`hippo wm push/read/clear/flush`). Bounded buffer (max 20 per scope) with importance-based eviction. Current-state notes live separately from long-term memory.
+- **Session handoffs** (`hippo handoff create/latest/show`). Persist session summaries, next actions, and artifacts so successor sessions can resume without transcript archaeology.
+- **Session lifecycle** with explicit start/end events, fallback session IDs, and `hippo session resume` for continuity.
+- **Explainable recall** (`hippo recall --why`). See which terms matched, whether BM25 or embedding contributed, and the source bucket (layer, confidence, local/global).
+- **`hippo current show`** for compact current-state display (active task + recent session events), ready for agent injection.
+- **SQLite lock hardening**: `busy_timeout=5000`, `synchronous=NORMAL`, `wal_autocheckpoint=100`. Concurrent plugin calls no longer hit `SQLITE_BUSY`.
+- **Consolidation batching**: all writes/deletes happen in a single transaction instead of N open/close cycles.
+- **`--limit` flag** on `hippo recall` and `hippo context` to cap result count independently of token budget.
+- **Plugin injection dedup guard** prevents double context injection on reconnect.
+
 ### What's new in v0.8.0
 
 - **Hybrid search** blends BM25 keywords with cosine embedding similarity. Install `@xenova/transformers`, run `hippo embed`, recall quality jumps. Falls back to BM25 otherwise.
@@ -149,6 +161,50 @@ hippo context --auto --budget 1500
 ```
 
 Hippo mirrors the latest trail to `.hippo/buffer/recent-session.md` so you can inspect the short-term thread without opening SQLite.
+
+### Session handoffs
+
+When you're done for the day (or switching to another agent), create a handoff so the next session knows exactly where to pick up:
+
+```bash
+hippo handoff create \
+  --summary "Finished schema migration, tests green" \
+  --next "Wire handoff injection into context output" \
+  --session sess_20260403 \
+  --artifact src/db.ts
+
+hippo handoff latest              # show the most recent handoff
+hippo handoff show 3              # show a specific handoff by ID
+hippo session resume              # re-inject latest handoff as context
+```
+
+### Working memory
+
+Working memory is a bounded scratchpad for current-state notes. It's separate from long-term memory and gets cleared between sessions.
+
+```bash
+hippo wm push --scope repo \
+  --content "Investigating flaky test in store.test.ts, line 42" \
+  --importance 0.9
+
+hippo wm read --scope repo        # show current working notes
+hippo wm clear --scope repo       # wipe the scratchpad
+hippo wm flush --scope repo       # flush on session end
+```
+
+The buffer holds a maximum of 20 entries per scope. When full, the lowest-importance entry is evicted.
+
+### Explainable recall
+
+See why a memory was returned:
+
+```bash
+hippo recall "data pipeline" --why --limit 5
+
+# --- mem_a1b2c3 [episodic] [observed] [local] score=0.847
+#     BM25: matched [data, pipeline]; cosine: 0.82
+#     ...memory content...
+```
 
 ---
 
@@ -401,9 +457,12 @@ hippo watch "npm run build"
 | `hippo remember "<text>" --global` | Store in global `~/.hippo/` store |
 | `hippo recall "<query>"` | Retrieve relevant memories (local + global) |
 | `hippo recall "<query>" --budget <n>` | Recall within token limit (default: 4000) |
+| `hippo recall "<query>" --limit <n>` | Cap result count |
+| `hippo recall "<query>" --why` | Show match reasons and source buckets |
 | `hippo recall "<query>" --json` | Output as JSON |
 | `hippo context --auto` | Smart context injection (auto-detects task from git) |
 | `hippo context "<query>" --budget <n>` | Context injection with explicit query (default: 1500) |
+| `hippo context --limit <n>` | Cap memory count in context |
 | `hippo context --budget 0` | Skip entirely (zero token cost) |
 | `hippo context --framing <mode>` | Framing: observe (default), suggest, assert |
 | `hippo context --format <fmt>` | Output format: markdown (default) or json |
@@ -446,6 +505,16 @@ hippo watch "npm run build"
 | `hippo hook list` | Show available framework hooks |
 | `hippo hook install <target>` | Install hook (claude-code, codex, cursor, openclaw) |
 | `hippo hook uninstall <target>` | Remove hook |
+| `hippo handoff create --summary "..."` | Create a session handoff |
+| `hippo handoff latest` | Show the most recent handoff |
+| `hippo handoff show <id>` | Show a specific handoff by ID |
+| `hippo session latest` | Show latest task snapshot + events |
+| `hippo session resume` | Re-inject latest handoff as context |
+| `hippo current show` | Compact current state (task + session events) |
+| `hippo wm push --scope <s> --content "..."` | Push to working memory |
+| `hippo wm read --scope <s>` | Read working memory entries |
+| `hippo wm clear --scope <s>` | Clear working memory |
+| `hippo wm flush --scope <s>` | Flush working memory (session end) |
 | `hippo dashboard` | Open web dashboard at localhost:3333 |
 | `hippo dashboard --port <n>` | Use custom port |
 | `hippo mcp` | Start MCP server (stdio transport) |
@@ -521,7 +590,7 @@ Add to your MCP config (e.g. `.cursor/mcp.json` or `claude_desktop_config.json`)
 }
 ```
 
-Exposes 6 tools: `hippo_recall`, `hippo_remember`, `hippo_outcome`, `hippo_context`, `hippo_status`, `hippo_learn`.
+Exposes tools: `hippo_recall`, `hippo_remember`, `hippo_outcome`, `hippo_context`, `hippo_status`, `hippo_learn`, `hippo_wm_push`.
 
 ### OpenClaw Plugin
 
@@ -586,7 +655,7 @@ For how these mechanisms connect to LLM training, continual learning, and open r
 | Git-friendly | Yes | No | Yes | No |
 | Framework agnostic | Yes | Partial | Yes | No |
 
-Mem0, Basic Memory, and Claude-Mem all implement "save everything, search later." Hippo implements 6 of 7 hippocampal mechanisms: two-speed storage, decay, retrieval strengthening, schema acceleration, conflict detection, and multi-agent transfer. It's the only tool that models what memories are worth keeping.
+Mem0, Basic Memory, and Claude-Mem all implement "save everything, search later." Hippo implements all 7 hippocampal mechanisms: two-speed storage, decay, retrieval strengthening, schema acceleration, conflict detection, multi-agent transfer, and explicit working memory. It's the only tool that models what memories are worth keeping.
 
 ---
 
