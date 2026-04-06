@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1 (2026-04-06)
+
+### Added
+- `hippo hook install claude-code` now also installs a Stop hook in `~/.claude/settings.json` that runs `hippo sleep` automatically when Claude Code exits. No more forgetting to consolidate.
+- `hippo init` auto-installs the Stop hook when Claude Code is detected.
+- `hippo hook uninstall claude-code` cleanly removes the Stop hook from settings.json.
+
 ## 0.8.0 (2026-03-27)
 
 ### Added

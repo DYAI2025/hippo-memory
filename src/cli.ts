@@ -26,6 +26,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { execSync } from 'child_process';
 import {
   createMemory,
@@ -252,6 +253,13 @@ function autoInstallHooks(quiet: boolean): void {
 
     installed.add(targetPath);
     console.log(`   Auto-installed ${hook} hook in ${hookDef.file}`);
+
+    // For claude-code, also install the Stop hook in settings.json
+    if (hook === 'claude-code') {
+      if (installClaudeCodeStopHook()) {
+        console.log(`   Auto-installed hippo sleep Stop hook in Claude Code settings.json`);
+      }
+    }
   }
 }
 
@@ -1849,6 +1857,13 @@ function cmdHook(
       console.log(`Created ${hook.file} with Hippo hook`);
     }
 
+    // For claude-code, also install the Stop hook in settings.json
+    if (target === 'claude-code') {
+      if (installClaudeCodeStopHook()) {
+        console.log(`Installed hippo sleep Stop hook in Claude Code settings.json`);
+      }
+    }
+
     return;
   }
 
@@ -1879,6 +1894,14 @@ function cmdHook(
     const cleaned = existing.replace(re, '\n').replace(/\n{3,}/g, '\n\n').trim();
     fs.writeFileSync(filepath, cleaned + '\n', 'utf8');
     console.log(`Removed Hippo hook from ${hook.file}`);
+
+    // For claude-code, also remove the Stop hook from settings.json
+    if (target === 'claude-code') {
+      if (uninstallClaudeCodeStopHook()) {
+        console.log(`Removed hippo sleep Stop hook from Claude Code settings.json`);
+      }
+    }
+
     return;
   }
 
@@ -1888,6 +1911,101 @@ function cmdHook(
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code settings.json Stop hook (hippo sleep on session end)
+// ---------------------------------------------------------------------------
+
+const HIPPO_STOP_HOOK_MARKER = 'hippo sleep';
+
+/**
+ * Resolve the Claude Code user-level settings.json path (~/.claude/settings.json).
+ * Always targets the global config so the Stop hook runs for all sessions.
+ */
+function resolveClaudeSettingsPath(): string {
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  return path.join(home, '.claude', 'settings.json');
+}
+
+/**
+ * Check if hippo sleep Stop hook is already installed in Claude Code settings.
+ */
+function hasClaudeCodeStopHook(settings: Record<string, unknown>): boolean {
+  const hooks = settings.hooks as Record<string, unknown[]> | undefined;
+  if (!hooks?.Stop) return false;
+  return JSON.stringify(hooks.Stop).includes(HIPPO_STOP_HOOK_MARKER);
+}
+
+/**
+ * Install a Claude Code Stop hook that runs `hippo sleep` at session end.
+ * Merges into existing settings.json without clobbering other hooks.
+ */
+function installClaudeCodeStopHook(): boolean {
+  const settingsPath = resolveClaudeSettingsPath();
+  const dir = path.dirname(settingsPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  let settings: Record<string, unknown> = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    } catch {
+      console.error(`   Warning: could not parse ${settingsPath}, skipping Stop hook install`);
+      return false;
+    }
+  }
+
+  if (hasClaudeCodeStopHook(settings)) return false;
+
+  // Ensure hooks.Stop array exists
+  if (!settings.hooks) settings.hooks = {};
+  const hooks = settings.hooks as Record<string, unknown[]>;
+  if (!Array.isArray(hooks.Stop)) hooks.Stop = [];
+
+  // Append hippo sleep hook entry
+  hooks.Stop.push({
+    hooks: [
+      {
+        type: 'command',
+        command: 'hippo sleep',
+        timeout: 30,
+      },
+    ],
+  });
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+  return true;
+}
+
+/**
+ * Remove the hippo sleep Stop hook from Claude Code settings.json.
+ */
+function uninstallClaudeCodeStopHook(): boolean {
+  const settingsPath = resolveClaudeSettingsPath();
+  if (!fs.existsSync(settingsPath)) return false;
+
+  let settings: Record<string, unknown>;
+  try {
+    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  } catch {
+    return false;
+  }
+
+  if (!hasClaudeCodeStopHook(settings)) return false;
+
+  const hooks = settings.hooks as Record<string, unknown[]>;
+  hooks.Stop = hooks.Stop.filter(
+    (entry) => !JSON.stringify(entry).includes(HIPPO_STOP_HOOK_MARKER)
+  );
+
+  // Clean up empty Stop array
+  if (hooks.Stop.length === 0) delete hooks.Stop;
+  // Clean up empty hooks object
+  if (Object.keys(hooks).length === 0) delete settings.hooks;
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -2096,6 +2214,7 @@ Commands:
   hook <sub> [target]      Manage framework integrations
     hook list              Show available hooks
     hook install <target>  Install hook (claude-code|codex|cursor|openclaw)
+                           claude-code also installs Stop hook (hippo sleep on exit)
     hook uninstall <target> Remove hook
   wm <sub>                 Working memory — bounded buffer for current state
     wm push                Push a working memory entry

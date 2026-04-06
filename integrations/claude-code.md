@@ -57,7 +57,9 @@ This tightens the feedback loop. Good memories strengthen; irrelevant ones decay
 
 ### Periodic maintenance
 
-Run the consolidation pass occasionally (or set it on a cron):
+Consolidation runs automatically when Claude Code exits (via a Stop hook in `~/.claude/settings.json`). This is installed by `hippo init` or `hippo hook install claude-code`.
+
+If you prefer manual control:
 
 ```bash
 hippo sleep
@@ -83,7 +85,11 @@ If your project already has a `CLAUDE.md`, just run:
 hippo init
 ```
 
-Hippo auto-detects Claude Code and patches `CLAUDE.md` with the hook block above. No copy-paste needed.
+Hippo auto-detects Claude Code and:
+1. Patches `CLAUDE.md` with the hook block above
+2. Adds a Stop hook to `~/.claude/settings.json` so `hippo sleep` runs on session exit
+
+No copy-paste needed, no cron required.
 
 To skip auto-detection: `hippo init --no-hooks`
 

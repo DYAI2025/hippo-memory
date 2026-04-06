@@ -43,6 +43,10 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
+### What's new in v0.9.1
+
+- **Auto-sleep on session exit.** `hippo hook install claude-code` now installs a Stop hook in `~/.claude/settings.json` so `hippo sleep` runs automatically when Claude Code exits. `hippo init` does this too when Claude Code is detected. No cron needed, no manual sleep.
+
 ### What's new in v0.9.0
 
 - **Working memory layer** (`hippo wm push/read/clear/flush`). Bounded buffer (max 20 per scope) with importance-based eviction. Current-state notes live separately from long-term memory.
@@ -503,7 +507,7 @@ hippo watch "npm run build"
 | `hippo peers` | List projects contributing to global store |
 | `hippo sync` | Pull global memories into local project |
 | `hippo hook list` | Show available framework hooks |
-| `hippo hook install <target>` | Install hook (claude-code, codex, cursor, openclaw) |
+| `hippo hook install <target>` | Install hook (claude-code also adds Stop hook for auto-sleep) |
 | `hippo hook uninstall <target>` | Remove hook |
 | `hippo handoff create --summary "..."` | Create a session handoff |
 | `hippo handoff latest` | Show the most recent handoff |
@@ -529,7 +533,7 @@ hippo watch "npm run build"
 
 | Framework | Detected by | Patches |
 |-----------|------------|---------|
-| Claude Code | `CLAUDE.md` or `.claude/settings.json` | `CLAUDE.md` |
+| Claude Code | `CLAUDE.md` or `.claude/settings.json` | `CLAUDE.md` + Stop hook in `settings.json` |
 | Codex | `AGENTS.md` or `.codex` | `AGENTS.md` |
 | Cursor | `.cursorrules` or `.cursor/rules` | `.cursorrules` |
 | OpenClaw | `.openclaw` or `AGENTS.md` | `AGENTS.md` |
@@ -541,7 +545,7 @@ No extra commands needed. Just `hippo init` and your agent knows about Hippo.
 If you prefer explicit control:
 
 ```bash
-hippo hook install claude-code   # patches CLAUDE.md
+hippo hook install claude-code   # patches CLAUDE.md + adds Stop hook to settings.json
 hippo hook install codex         # patches AGENTS.md
 hippo hook install cursor        # patches .cursorrules
 hippo hook install openclaw      # patches AGENTS.md
@@ -551,6 +555,8 @@ This adds a `<!-- hippo:start -->` ... `<!-- hippo:end -->` block that tells the
 1. Run `hippo context --auto --budget 1500` at session start
 2. Run `hippo remember "<lesson>" --error` on errors
 3. Run `hippo outcome --good` on completion
+
+For Claude Code, it also adds a Stop hook to `~/.claude/settings.json` so `hippo sleep` runs automatically when the session exits.
 
 To remove: `hippo hook uninstall claude-code`
 
