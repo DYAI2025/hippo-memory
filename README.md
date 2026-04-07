@@ -6,7 +6,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
 ```
-Works with:  Claude Code, Codex, Cursor, OpenClaw, any CLI agent
+Works with:  Claude Code, Codex, Cursor, OpenClaw, OpenCode, any CLI agent
 Imports from: ChatGPT, Claude (CLAUDE.md), Cursor (.cursorrules), any markdown
 Storage:     SQLite backbone + markdown/YAML mirrors. Git-trackable and human-readable.
 Dependencies: Zero runtime deps. Requires Node.js 22.5+. Optional embeddings via @xenova/transformers.
@@ -86,7 +86,7 @@ hippo init
 #    Auto-installed claude-code hook in CLAUDE.md
 ```
 
-If you have a `CLAUDE.md`, it patches it. `AGENTS.md` for Codex/OpenClaw. `.cursorrules` for Cursor. No manual `hook install` needed. Your agent starts using Hippo on its next session.
+If you have a `CLAUDE.md`, it patches it. `AGENTS.md` for Codex/OpenClaw/OpenCode. `.cursorrules` for Cursor. No manual `hook install` needed. Your agent starts using Hippo on its next session.
 
 It also sets up a daily cron job (6:15am) that runs `hippo learn --git` and `hippo sleep` automatically. Memories get captured from your commits and consolidated every day without you thinking about it.
 
@@ -586,6 +586,7 @@ hippo watch "npm run build"
 | Codex | `AGENTS.md` or `.codex` | `AGENTS.md` |
 | Cursor | `.cursorrules` or `.cursor/rules` | `.cursorrules` |
 | OpenClaw | `.openclaw` or `AGENTS.md` | `AGENTS.md` |
+| OpenCode | `.opencode/` or `opencode.json` | `AGENTS.md` |
 
 No extra commands needed. Just `hippo init` and your agent knows about Hippo.
 
@@ -598,6 +599,7 @@ hippo hook install claude-code   # patches CLAUDE.md + adds Stop hook to setting
 hippo hook install codex         # patches AGENTS.md
 hippo hook install cursor        # patches .cursorrules
 hippo hook install openclaw      # patches AGENTS.md
+hippo hook install opencode      # patches AGENTS.md
 ```
 
 This adds a `<!-- hippo:start -->` ... `<!-- hippo:end -->` block that tells the agent to:
