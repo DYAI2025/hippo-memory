@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0 (2026-04-07)
+
+### Added
+- **Active invalidation**: `hippo learn --git` detects migration/breaking commits and actively weakens memories referencing the old pattern. Manual invalidation via `hippo invalidate "<pattern>"`.
+- **Architectural decisions**: `hippo decide` stores one-off decisions with 90-day half-life and verified confidence. Supports `--context` for reasoning and `--supersedes` to chain decisions.
+- 1.2x recall boost for decision-tagged memories so they surface despite low retrieval frequency.
+
 ## 0.9.1 (2026-04-06)
 
 ### Added

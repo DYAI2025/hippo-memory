@@ -43,6 +43,12 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
+### What's new in v0.10.0
+
+- **Active invalidation.** `hippo learn --git` detects migration and breaking-change commits and actively weakens memories referencing the old pattern. Manual invalidation via `hippo invalidate "REST API" --reason "migrated to GraphQL"`.
+- **Architectural decisions.** `hippo decide` stores one-off decisions with 90-day half-life and verified confidence. Supports `--context` for reasoning and `--supersedes` to chain decisions when the architecture evolves.
+- **Decision recall boost.** 1.2x scoring multiplier for decision-tagged memories so they surface despite low retrieval frequency.
+
 ### What's new in v0.9.1
 
 - **Auto-sleep on session exit.** `hippo hook install claude-code` now installs a Stop hook in `~/.claude/settings.json` so `hippo sleep` runs automatically when Claude Code exits. `hippo init` does this too when Claude Code is detected. No cron needed, no manual sleep.
@@ -278,6 +284,44 @@ hippo recall "cache issues"   # again next week
 
 ---
 
+### Active invalidation
+
+When you migrate from one tool to another, old memories about the replaced tool should die immediately. Hippo detects migration and breaking-change commits during `hippo learn --git` and actively weakens matching memories.
+
+```bash
+hippo learn --git
+# feat: migrate from webpack to vite
+#    Invalidated 3 memories referencing "webpack"
+#    Learned: migrate from webpack to vite
+```
+
+You can also invalidate manually:
+
+```bash
+hippo invalidate "REST API" --reason "migrated to GraphQL"
+# Invalidated 5 memories referencing "REST API".
+```
+
+---
+
+### Architectural decisions
+
+One-off decisions don't repeat, so they can't earn their keep through retrieval alone. `hippo decide` stores them with a 90-day half-life and verified confidence so they survive long enough to matter.
+
+```bash
+hippo decide "Use PostgreSQL for all new services" --context "JSONB support"
+# Decision recorded: mem_a1b2c3
+
+# Later, when the decision changes:
+hippo decide "Use CockroachDB for global services" \
+  --context "Need multi-region" \
+  --supersedes mem_a1b2c3
+# Superseded mem_a1b2c3 (half-life halved, marked stale)
+# Decision recorded: mem_d4e5f6
+```
+
+---
+
 ### Error memories stick
 
 Tag a memory as an error and it gets 2x the half-life automatically.
@@ -506,6 +550,11 @@ hippo watch "npm run build"
 | `hippo share --auto --dry-run` | Preview what would be shared |
 | `hippo peers` | List projects contributing to global store |
 | `hippo sync` | Pull global memories into local project |
+| `hippo invalidate "<pattern>"` | Actively weaken memories matching an old pattern |
+| `hippo invalidate "<pattern>" --reason "<why>"` | Include what replaced it |
+| `hippo decide "<decision>"` | Record architectural decision (90-day half-life) |
+| `hippo decide "<decision>" --context "<why>"` | Include reasoning |
+| `hippo decide "<decision>" --supersedes <id>` | Supersede a previous decision |
 | `hippo hook list` | Show available framework hooks |
 | `hippo hook install <target>` | Install hook (claude-code also adds Stop hook for auto-sleep) |
 | `hippo hook uninstall <target>` | Remove hook |
