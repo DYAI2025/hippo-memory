@@ -1963,12 +1963,12 @@ function installClaudeCodeStopHook(): boolean {
   const hooks = settings.hooks as Record<string, unknown[]>;
   if (!Array.isArray(hooks.Stop)) hooks.Stop = [];
 
-  // Append hippo sleep hook entry
+  // Append hippo sleep hook entry (silent: runs every turn, must not produce errors)
   hooks.Stop.push({
     hooks: [
       {
         type: 'command',
-        command: 'hippo sleep',
+        command: 'hippo sleep 2>/dev/null || true',
         timeout: 30,
       },
     ],
