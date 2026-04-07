@@ -32,6 +32,8 @@ export interface MemoryEntry {
   content: string;         // the actual memory text
 }
 
+export const DECISION_HALF_LIFE_DAYS = 90;
+
 // Emotional multipliers from PLAN.md
 const EMOTIONAL_MULTIPLIERS: Record<EmotionalValence, number> = {
   neutral: 1.0,
