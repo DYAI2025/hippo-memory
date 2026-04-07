@@ -82,6 +82,7 @@ import {
   fetchGitLog,
   isGitRepo,
 } from './autolearn.js';
+import { extractInvalidationTarget, invalidateMatching } from './invalidation.js';
 import {
   getGlobalRoot,
   initGlobal,
@@ -1495,6 +1496,14 @@ function learnFromRepo(
     if (deduplicateLesson(hippoRoot, lesson)) {
       skipped++;
       continue;
+    }
+
+    const target = extractInvalidationTarget(lesson);
+    if (target) {
+      const invResult = invalidateMatching(hippoRoot, target);
+      if (invResult.invalidated > 0) {
+        console.log(`${prefix}   Invalidated ${invResult.invalidated} memories referencing "${target.from}"`);
+      }
     }
 
     const schemaFitVal = computeSchemaFit(lesson, gitLearnTags, existingForSchema);

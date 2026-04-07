@@ -4,8 +4,9 @@ import * as os from 'os';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { captureError, extractLessons, deduplicateLesson, fetchGitLog, isGitRepo } from '../src/autolearn.js';
-import { initStore, writeEntry } from '../src/store.js';
+import { initStore, writeEntry, readEntry } from '../src/store.js';
 import { createMemory } from '../src/memory.js';
+import { extractInvalidationTarget, invalidateMatching } from '../src/invalidation.js';
 
 // ---------------------------------------------------------------------------
 // captureError
@@ -237,5 +238,62 @@ describe('deduplicateLesson', () => {
     const unrelated = 'completely different content about authentication tokens jwt';
     const isDup = deduplicateLesson(tmpDir, unrelated);
     expect(isDup).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invalidation during git learning
+// ---------------------------------------------------------------------------
+
+describe('invalidation during git learning', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hippo-inv-learn-'));
+    initStore(tmpDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('invalidates old memories when learning a migration commit', () => {
+    // Setup: create an existing memory about webpack
+    const mem = createMemory('webpack config uses HtmlWebpackPlugin for output', {
+      tags: ['webpack', 'build'],
+    });
+    writeEntry(tmpDir, mem);
+
+    // Extract invalidation target from a migration commit message
+    const target = extractInvalidationTarget('feat: migrate from webpack to vite');
+    expect(target).not.toBeNull();
+    expect(target!.from).toBe('webpack');
+    expect(target!.to).toBe('vite');
+
+    // Invalidate matching memories
+    const result = invalidateMatching(tmpDir, target!);
+    expect(result.invalidated).toBe(1);
+
+    // Verify the old memory was weakened
+    const updated = readEntry(tmpDir, mem.id);
+    expect(updated).not.toBeNull();
+    expect(updated!.tags).toContain('invalidated');
+    expect(updated!.confidence).toBe('stale');
+    expect(updated!.half_life_days).toBeLessThan(mem.half_life_days);
+  });
+
+  it('does not invalidate memories for non-migration commits', () => {
+    const mem = createMemory('webpack config uses HtmlWebpackPlugin for output', {
+      tags: ['webpack', 'build'],
+    });
+    writeEntry(tmpDir, mem);
+
+    const target = extractInvalidationTarget('fix: correct off-by-one in pagination');
+    expect(target).toBeNull();
+
+    // Memory should remain unchanged
+    const updated = readEntry(tmpDir, mem.id);
+    expect(updated!.tags).not.toContain('invalidated');
+    expect(updated!.half_life_days).toBe(mem.half_life_days);
   });
 });
