@@ -32,7 +32,7 @@ Add to `openclaw.json`:
         config: {
           budget: 1500,          // token budget for context injection
           autoContext: true,     // auto-inject memory at session start
-          autoLearn: true,       // auto-capture errors
+          autoLearn: true,       // auto-capture errors (filtered, deduplicated, rate-limited)
           autoSleep: false,      // auto-consolidate after heavy sessions
           framing: "observe"     // observe | suggest | assert
           // root: "C:/path/to/workspace/.hippo" // optional override
@@ -71,6 +71,16 @@ The plugin registers these tools for the agent to call:
 | `hippo_resolve` | Resolve a conflict by keeping one memory (optional) |
 | `hippo_share` | Share a memory to global store with transfer scoring (optional) |
 | `hippo_peers` | List projects contributing to global store (optional) |
+
+### Error capture filtering
+
+When `autoLearn` is enabled, the plugin captures tool errors as memories. To prevent memory pollution from repetitive infrastructure noise, three filters are applied:
+
+1. **Noise pattern filter.** Known transient errors (browser timeouts, image path restrictions, `ECONNREFUSED`, `ENOENT`, `Navigation timeout`, etc.) are silently skipped.
+2. **Per-session rate limit.** Maximum 5 error memories per session. Prevents runaway error storms from flooding the store.
+3. **Per-session deduplication.** The same error from the same tool is only captured once per session, even if it fires repeatedly.
+
+Only genuinely novel, domain-specific errors make it through to `hippo remember`.
 
 ### How it differs from claude-mem
 

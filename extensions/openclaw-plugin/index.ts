@@ -28,8 +28,41 @@ type HippoRuntimeContext = {
 };
 
 const AUTO_SLEEP_SESSION_THRESHOLD = 10;
+const MAX_ERRORS_PER_SESSION = 5;
 const sessionMemoryCounts = new Map<string, number>();
+const sessionErrorCounts = new Map<string, number>();
+const sessionErrorHashes = new Map<string, Set<string>>();
 const injectedSessions = new Set<string>();
+
+/**
+ * Infrastructure errors that repeat constantly and never produce useful lessons.
+ * These are transient operational failures, not domain-specific gotchas.
+ */
+const NOISE_ERROR_PATTERNS: RegExp[] = [
+  /Local media path is not under an allowed directory/i,
+  /timed out\.?\s*Restart the OpenClaw gateway/i,
+  /EISDIR:\s*illegal operation on a directory/i,
+  /Missing required parameter:\s*path/i,
+  /ENOENT:\s*no such file or directory/i,
+  /EACCES:\s*permission denied/i,
+  /EPERM:\s*operation not permitted/i,
+  /socket hang up/i,
+  /ECONNREFUSED/i,
+  /ECONNRESET/i,
+  /ERR_SOCKET_CONNECTION_TIMEOUT/i,
+  /net::ERR_/i,
+  /Navigation timeout/i,
+];
+
+function isNoiseError(error: string): boolean {
+  return NOISE_ERROR_PATTERNS.some((p) => p.test(error));
+}
+
+function hashError(toolName: string, error: string): string {
+  // Normalize the error to a stable key: tool + first 80 chars of error
+  const normalized = error.replace(/\s+/g, ' ').trim().slice(0, 80).toLowerCase();
+  return `${toolName}::${normalized}`;
+}
 
 function getConfig(api: any): HippoConfig {
   try {
@@ -518,6 +551,29 @@ export default function register(api: any) {
       if (!event.error?.trim()) return;
       if (event.toolName.startsWith('hippo_')) return;
 
+      // --- Filter 1: Skip known infrastructure noise ---
+      if (isNoiseError(event.error)) {
+        logger.debug?.(`[hippo] autoLearn skipped noise error from '${event.toolName}'`);
+        return;
+      }
+
+      const sessionKey = getSessionIdentity(ctx);
+
+      // --- Filter 2: Rate-limit errors per session ---
+      const errorCount = sessionErrorCounts.get(sessionKey) ?? 0;
+      if (errorCount >= MAX_ERRORS_PER_SESSION) {
+        logger.debug?.(`[hippo] autoLearn rate-limited (${errorCount} errors this session)`);
+        return;
+      }
+
+      // --- Filter 3: Deduplicate within session ---
+      const hash = hashError(event.toolName, event.error);
+      const seen = sessionErrorHashes.get(sessionKey) ?? new Set<string>();
+      if (seen.has(hash)) {
+        logger.debug?.(`[hippo] autoLearn skipped duplicate error from '${event.toolName}'`);
+        return;
+      }
+
       const hippoCwd = resolveHippoCwdFromContext(api, ctx, cfg.root);
       const toolTag = sanitizeTag(event.toolName);
       let args =
@@ -528,6 +584,9 @@ export default function register(api: any) {
       const result = runHippo(args, hippoCwd);
       if (hippoRememberSucceeded(result)) {
         recordSessionMemory(ctx);
+        seen.add(hash);
+        sessionErrorHashes.set(sessionKey, seen);
+        sessionErrorCounts.set(sessionKey, errorCount + 1);
       } else {
         logger.debug?.(`[hippo] autoLearn skipped storing tool error: ${result}`);
       }
@@ -537,9 +596,11 @@ export default function register(api: any) {
   api.on(
     'session_end',
     (_event: { sessionId: string; messageCount: number }, ctx: HippoRuntimeContext) => {
-      // Clear dedup guard so a new session can inject fresh context
+      // Clear dedup guards so a new session starts fresh
       const sessionKey = getSessionIdentity(ctx);
       injectedSessions.delete(sessionKey);
+      sessionErrorCounts.delete(sessionKey);
+      sessionErrorHashes.delete(sessionKey);
 
       const cfg = getConfig(api);
       const hippoCwd = resolveHippoCwdFromContext(api, ctx, cfg.root);

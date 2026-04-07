@@ -69,7 +69,7 @@ import {
   SessionEvent,
 } from './store.js';
 import type { SessionHandoff } from './handoff.js';
-import { search, markRetrieved, estimateTokens, hybridSearch, explainMatch } from './search.js';
+import { search, markRetrieved, estimateTokens, hybridSearch, physicsSearch, explainMatch } from './search.js';
 import { consolidate } from './consolidate.js';
 import {
   isEmbeddingAvailable,
@@ -77,6 +77,10 @@ import {
   embedMemory,
   loadEmbeddingIndex,
 } from './embeddings.js';
+import { loadPhysicsState, resetAllPhysicsState } from './physics-state.js';
+import { computeSystemEnergy, vecNorm } from './physics.js';
+import { loadConfig } from './config.js';
+import { openHippoDb, closeHippoDb } from './db.js';
 import {
   captureError,
   extractLessons,
@@ -394,6 +398,8 @@ async function cmdRecall(
   const limit = parseLimitFlag(flags['limit']);
   const asJson = Boolean(flags['json']);
   const showWhy = Boolean(flags['why']);
+  const forcePhysics = Boolean(flags['physics']);
+  const forceClassic = Boolean(flags['classic']);
   const globalRoot = getGlobalRoot();
 
   const localEntries = loadSearchEntries(hippoRoot, query);
@@ -401,8 +407,20 @@ async function cmdRecall(
 
   const hasGlobal = globalEntries.length > 0;
 
+  // Determine search mode: --physics forces physics, --classic forces BM25+cosine,
+  // default uses physics if config.physics.enabled is not false
+  const config = loadConfig(hippoRoot);
+  const usePhysics = forcePhysics
+    || (!forceClassic && config.physics.enabled !== false);
+
   let results;
-  if (hasGlobal) {
+  if (usePhysics && !hasGlobal) {
+    results = await physicsSearch(query, localEntries, {
+      budget,
+      hippoRoot,
+      physicsConfig: config.physics,
+    });
+  } else if (hasGlobal) {
     // Use searchBothHybrid for merged results with embedding support
     results = await searchBothHybrid(query, hippoRoot, globalRoot, { budget });
   } else {
@@ -588,6 +606,33 @@ function cmdStatus(hippoRoot: string): void {
     const embIndex = loadEmbeddingIndex(hippoRoot);
     const embCount = Object.keys(embIndex).length;
     console.log(`Embedded:          ${embCount}/${entries.length} memories`);
+  }
+
+  // Physics status
+  try {
+    const db = openHippoDb(hippoRoot);
+    try {
+      const physicsMap = loadPhysicsState(db);
+      if (physicsMap.size > 0) {
+        const particles = Array.from(physicsMap.values());
+        const physConfig = loadConfig(hippoRoot);
+        const energy = computeSystemEnergy(particles, physConfig.physics.G_memory);
+        let sumVelMag = 0;
+        let maxVelMag = 0;
+        for (const p of particles) {
+          const mag = vecNorm(p.velocity);
+          sumVelMag += mag;
+          if (mag > maxVelMag) maxVelMag = mag;
+        }
+        const avgVelMag = sumVelMag / particles.length;
+        console.log('');
+        console.log(`Physics: ${particles.length} particles, energy: ${fmt(energy.total, 4)} (KE: ${fmt(energy.kinetic, 4)}, PE: ${fmt(energy.potential, 4)}), avg vel: ${fmt(avgVelMag, 4)}`);
+      }
+    } finally {
+      closeHippoDb(db);
+    }
+  } catch {
+    // Physics table may not exist yet — degrade gracefully
   }
 }
 
@@ -1260,7 +1305,12 @@ async function cmdContext(
         isGlobal: !localIndex.entries[r.entry.id],
       }));
     } else {
-      results = (await hybridSearch(query, localEntries, { budget, hippoRoot })).map((r) => ({
+      const ctxConfig = loadConfig(hippoRoot);
+      const usePhysicsCtx = ctxConfig.physics?.enabled !== false;
+      const ctxResults = usePhysicsCtx
+        ? await physicsSearch(query, localEntries, { budget, hippoRoot, physicsConfig: ctxConfig.physics })
+        : await hybridSearch(query, localEntries, { budget, hippoRoot });
+      results = ctxResults.map((r) => ({
         entry: r.entry,
         score: r.score,
         tokens: r.tokens,
@@ -1410,6 +1460,19 @@ async function cmdEmbed(
   if (!isEmbeddingAvailable()) {
     console.log('Embeddings not available. Install @xenova/transformers to enable:');
     console.log('  npm install @xenova/transformers');
+    return;
+  }
+
+  if (flags['reset-physics']) {
+    const entries = loadAllEntries(hippoRoot);
+    const embIndex = loadEmbeddingIndex(hippoRoot);
+    const db = openHippoDb(hippoRoot);
+    try {
+      const count = resetAllPhysicsState(db, entries, embIndex);
+      console.log(`Reset physics state: ${count} particles re-initialized from embeddings.`);
+    } finally {
+      closeHippoDb(db);
+    }
     return;
   }
 

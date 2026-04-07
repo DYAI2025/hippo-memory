@@ -9,6 +9,8 @@ import * as path from 'path';
 import { createRequire } from 'module';
 import { MemoryEntry } from './memory.js';
 import { loadAllEntries } from './store.js';
+import { openHippoDb, closeHippoDb } from './db.js';
+import { initializeParticle, savePhysicsState, loadPhysicsState } from './physics-state.js';
 
 // Use createRequire for synchronous module resolution check in ESM
 const _require = createRequire(import.meta.url);
@@ -174,6 +176,22 @@ export async function embedMemory(
   const index = loadEmbeddingIndex(hippoRoot);
   index[entry.id] = vector;
   saveEmbeddingIndex(hippoRoot, index);
+
+  // Initialize physics state for this memory
+  try {
+    const db = openHippoDb(hippoRoot);
+    try {
+      const existing = loadPhysicsState(db, [entry.id]);
+      if (!existing.has(entry.id)) {
+        const particle = initializeParticle(entry, vector);
+        savePhysicsState(db, [particle]);
+      }
+    } finally {
+      closeHippoDb(db);
+    }
+  } catch {
+    // Physics init is best-effort — don't break embedding
+  }
 }
 
 /**

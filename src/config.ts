@@ -4,6 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { type PhysicsConfig, DEFAULT_PHYSICS_CONFIG, mergePhysicsConfig } from './physics-config.js';
 
 export interface HippoConfig {
   defaultHalfLifeDays: number;
@@ -22,6 +23,7 @@ export interface HippoConfig {
     enabled: boolean;
   };
   gitLearnPatterns: string[];
+  physics: PhysicsConfig;
 }
 
 const DEFAULT_CONFIG: HippoConfig = {
@@ -44,6 +46,7 @@ const DEFAULT_CONFIG: HippoConfig = {
     'fix', 'revert', 'bug', 'error', 'hotfix', 'bugfix',
     'refactor', 'perf', 'chore', 'breaking', 'deprecate',
   ],
+  physics: { ...DEFAULT_PHYSICS_CONFIG },
 };
 
 export function loadConfig(hippoRoot: string): HippoConfig {
@@ -59,6 +62,7 @@ export function loadConfig(hippoRoot: string): HippoConfig {
       embeddings: { ...DEFAULT_CONFIG.embeddings, ...(raw.embeddings ?? {}) },
       global: { ...DEFAULT_CONFIG.global, ...(raw.global ?? {}) },
       gitLearnPatterns: raw.gitLearnPatterns ?? DEFAULT_CONFIG.gitLearnPatterns,
+      physics: mergePhysicsConfig(raw.physics as Partial<PhysicsConfig> | undefined),
     };
   } catch {
     return { ...DEFAULT_CONFIG };

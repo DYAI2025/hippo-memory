@@ -43,6 +43,10 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
+### What's new in v0.11.1
+
+- **OpenClaw error capture filtering.** The `autoLearn` hook now applies three filters before storing tool errors: a noise pattern filter for known transient errors, per-session rate limiting (max 5), and per-session deduplication. Prevents memory pollution from infrastructure noise.
+
 ### What's new in v0.11.0
 
 - **Reward-proportional decay.** Outcome feedback now modulates decay rate continuously instead of fixed half-life deltas. Memories with consistent positive outcomes decay up to 1.5x slower; consistent negatives decay up to 2x faster. Mixed outcomes converge toward neutral. Inspired by R-STDP in spiking neural networks. `hippo inspect` now shows cumulative outcome counts and the computed reward factor.

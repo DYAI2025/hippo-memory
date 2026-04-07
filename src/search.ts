@@ -11,6 +11,12 @@ import {
   cosineSimilarity,
   loadEmbeddingIndex,
 } from './embeddings.js';
+import { physicsScore as computePhysicsScores } from './physics.js';
+import type { PhysicsParticle } from './physics.js';
+import type { PhysicsConfig } from './physics-config.js';
+import { DEFAULT_PHYSICS_CONFIG } from './physics-config.js';
+import { loadPhysicsState } from './physics-state.js';
+import { openHippoDb, closeHippoDb } from './db.js';
 
 // ---------------------------------------------------------------------------
 // Tokenizer
@@ -230,6 +236,125 @@ export async function hybridSearch(
   }
 
   return results;
+}
+
+/**
+ * Physics-based search: scores memories using gravitational force, momentum,
+ * and cluster amplification. Falls back to classic hybrid for memories
+ * without physics state.
+ */
+export async function physicsSearch(
+  query: string,
+  entries: MemoryEntry[],
+  options: {
+    budget?: number;
+    now?: Date;
+    hippoRoot?: string;
+    physicsConfig?: PhysicsConfig;
+    queryEmbedding?: number[]; // pre-computed query vector (for testing/benchmarks)
+  } = {}
+): Promise<SearchResult[]> {
+  const now = options.now ?? new Date();
+  const budget = options.budget ?? 4000;
+  const config = options.physicsConfig ?? DEFAULT_PHYSICS_CONFIG;
+
+  if (entries.length === 0 || !options.hippoRoot) return [];
+
+  // Get query embedding (use pre-computed if provided)
+  let queryVector = options.queryEmbedding ?? [];
+  if (queryVector.length === 0) {
+    if (!isEmbeddingAvailable()) {
+      return hybridSearch(query, entries, options);
+    }
+    queryVector = await getEmbedding(query);
+    if (queryVector.length === 0) {
+      return hybridSearch(query, entries, options);
+    }
+  }
+
+  // Load physics state
+  let physicsMap: Map<string, PhysicsParticle>;
+  try {
+    const db = openHippoDb(options.hippoRoot);
+    try {
+      physicsMap = loadPhysicsState(db);
+    } finally {
+      closeHippoDb(db);
+    }
+  } catch {
+    return hybridSearch(query, entries, options);
+  }
+
+  // Split entries into physics-enabled and classic
+  const physicsEntries: MemoryEntry[] = [];
+  const physicsParticles: PhysicsParticle[] = [];
+  const classicEntries: MemoryEntry[] = [];
+
+  for (const entry of entries) {
+    const particle = physicsMap.get(entry.id);
+    if (particle && particle.position.length > 0) {
+      physicsEntries.push(entry);
+      physicsParticles.push(particle);
+    } else {
+      classicEntries.push(entry);
+    }
+  }
+
+  // Score physics-enabled memories
+  const physicsResults: SearchResult[] = [];
+  if (physicsParticles.length > 0) {
+    const scored = computePhysicsScores(physicsParticles, queryVector, config);
+    const entryMap = new Map(physicsEntries.map(e => [e.id, e]));
+
+    for (const s of scored) {
+      if (s.finalScore <= 0) continue;
+      const entry = entryMap.get(s.memoryId);
+      if (!entry) continue;
+      physicsResults.push({
+        entry,
+        score: s.finalScore,
+        bm25: 0,
+        cosine: s.baseScore,
+        tokens: estimateTokens(entry.content),
+      });
+    }
+  }
+
+  // Score classic memories (no physics state)
+  const classicResults = classicEntries.length > 0
+    ? await hybridSearch(query, classicEntries, { ...options, budget: Infinity })
+    : [];
+
+  // Normalize both pools to [0, 1] and merge
+  const merged = mergeScorePools(physicsResults, classicResults);
+
+  // Sort and apply budget
+  merged.sort((a, b) => b.score - a.score);
+
+  const results: SearchResult[] = [];
+  let usedTokens = 0;
+  for (const result of merged) {
+    if (usedTokens + result.tokens > budget) continue;
+    results.push(result);
+    usedTokens += result.tokens;
+  }
+
+  return results;
+}
+
+/** Normalize two score pools to [0,1] and combine. */
+function mergeScorePools(poolA: SearchResult[], poolB: SearchResult[]): SearchResult[] {
+  const maxA = poolA.reduce((m, r) => Math.max(m, r.score), 1e-9);
+  const maxB = poolB.reduce((m, r) => Math.max(m, r.score), 1e-9);
+
+  const merged: SearchResult[] = [];
+  for (const r of poolA) {
+    merged.push({ ...r, score: r.score / maxA });
+  }
+  for (const r of poolB) {
+    merged.push({ ...r, score: r.score / maxB });
+  }
+  return merged;
 }
 
 /**

@@ -11,7 +11,7 @@ import {
   WM_MAX_ENTRIES,
   WorkingMemoryItem,
 } from '../src/working-memory.js';
-import { openHippoDb, closeHippoDb, getSchemaVersion } from '../src/db.js';
+import { openHippoDb, closeHippoDb, getSchemaVersion, getCurrentSchemaVersion } from '../src/db.js';
 
 let tmpDir: string;
 
@@ -28,7 +28,7 @@ describe('schema migration', () => {
   it('creates the working_memory table at schema version 6', () => {
     const db = openHippoDb(tmpDir);
     try {
-      expect(getSchemaVersion(db)).toBe(7);
+      expect(getSchemaVersion(db)).toBe(getCurrentSchemaVersion());
       // Table should exist — inserting should not throw
       db.prepare(`SELECT COUNT(*) AS cnt FROM working_memory`).get();
     } finally {

@@ -175,7 +175,7 @@ describe('openclaw hippo plugin', () => {
       {
         toolName: 'browser_open',
         params: { url: 'https://example.com' },
-        error: 'navigation timeout after 30000ms',
+        error: 'Element not found: selector "#login-btn" did not match any elements',
       },
       {
         agentId: 'main',

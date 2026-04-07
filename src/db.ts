@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
+import { createPhysicsTable } from './physics-state.js';
 
 const require = createRequire(import.meta.url);
 
@@ -20,7 +21,7 @@ const { DatabaseSync } = require('node:sqlite') as {
   DatabaseSync: new (path: string) => DatabaseSyncLike;
 };
 
-const CURRENT_SCHEMA_VERSION = 7;
+const CURRENT_SCHEMA_VERSION = 8;
 
 type Migration = {
   version: number;
@@ -186,6 +187,12 @@ const MIGRATIONS: Migration[] = [
       if (!tableHasColumn(db, 'memories', 'outcome_negative')) {
         db.exec(`ALTER TABLE memories ADD COLUMN outcome_negative INTEGER NOT NULL DEFAULT 0`);
       }
+    },
+  },
+  {
+    version: 8,
+    up: (db) => {
+      createPhysicsTable(db);
     },
   },
 ];

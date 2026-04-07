@@ -17,6 +17,10 @@ import {
   replaceDetectedConflicts,
 } from './store.js';
 import { textOverlap } from './search.js';
+import { openHippoDb, closeHippoDb } from './db.js';
+import { loadPhysicsState, savePhysicsState, refreshParticleProperties } from './physics-state.js';
+import { simulate, type ForceContext } from './physics.js';
+import { loadConfig } from './config.js';
 
 const DECAY_THRESHOLD = 0.05;
 const MERGE_OVERLAP_THRESHOLD = 0.35;  // Jaccard similarity for "related"
@@ -29,6 +33,7 @@ export interface ConsolidationResult {
   semanticCreated: number;
   dryRun: boolean;
   details: string[];
+  physicsSimulated: number;
 }
 
 /**
@@ -48,6 +53,7 @@ export function consolidate(
     semanticCreated: 0,
     dryRun,
     details: [],
+    physicsSimulated: 0,
   };
 
   const all = loadAllEntries(hippoRoot);
@@ -86,7 +92,68 @@ export function consolidate(
   }
 
   // -------------------------------------------------------------------------
-  // 2. Merge pass  - episodic entries only
+  // 2. Physics simulation pass
+  // -------------------------------------------------------------------------
+  if (!dryRun) {
+    try {
+      const config = loadConfig(hippoRoot);
+      const physicsEnabled = config.physics.enabled === true
+        || (config.physics.enabled === 'auto');
+
+      if (physicsEnabled) {
+        const db = openHippoDb(hippoRoot);
+        try {
+          const physicsMap = loadPhysicsState(db);
+          const particles = Array.from(physicsMap.values());
+
+          if (particles.length > 0) {
+            // Build entry lookup for property refresh
+            const entryMap = new Map(survivors.map(e => [e.id, e]));
+            refreshParticleProperties(particles, entryMap, now);
+
+            // Build conflict pairs from survivors
+            const conflictPairs = new Map<string, Set<string>>();
+            for (const entry of survivors) {
+              if (entry.conflicts_with.length > 0) {
+                const set = conflictPairs.get(entry.id) ?? new Set<string>();
+                for (const cid of entry.conflicts_with) set.add(cid);
+                conflictPairs.set(entry.id, set);
+              }
+            }
+
+            // Build half-life lookup
+            const halfLives = new Map<string, number>();
+            for (const entry of survivors) {
+              halfLives.set(entry.id, entry.half_life_days);
+            }
+
+            const ctx: ForceContext = {
+              conflictPairs,
+              halfLives,
+              config: config.physics,
+            };
+
+            const stats = simulate(particles, ctx);
+            savePhysicsState(db, particles);
+
+            result.physicsSimulated = stats.particleCount;
+            result.details.push(
+              `  ⚛️  physics: ${stats.particleCount} particles, ` +
+              `avg vel ${stats.avgVelocityMagnitude.toFixed(4)}, ` +
+              `energy ${stats.energy.total.toFixed(4)}`
+            );
+          }
+        } finally {
+          closeHippoDb(db);
+        }
+      }
+    } catch (error) {
+      result.details.push(`  ⚠️ physics simulation skipped: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 3. Merge pass  - episodic entries only
   // -------------------------------------------------------------------------
   const episodics = survivors.filter((e) => e.layer === Layer.Episodic);
   const used = new Set<string>();
@@ -145,7 +212,7 @@ export function consolidate(
   }
 
   // -------------------------------------------------------------------------
-  // 3. Log run
+  // 4. Log run
   // -------------------------------------------------------------------------
   if (!dryRun) {
     const detectedConflicts = detectConflicts(survivors, now);

@@ -17,7 +17,7 @@ import {
   applyOutcome,
   calculateStrength,
 } from '../memory.js';
-import { search, hybridSearch, markRetrieved, estimateTokens } from '../search.js';
+import { search, hybridSearch, physicsSearch, markRetrieved, estimateTokens } from '../search.js';
 import { loadAllEntries, writeEntry, readEntry, initStore, loadActiveTaskSnapshot, listMemoryConflicts, resolveConflict } from '../store.js';
 import { shareMemory, listPeers } from '../shared.js';
 import { consolidate } from '../consolidate.js';
@@ -228,7 +228,10 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       const query = String(args.query || '');
       const budget = Number(args.budget) || config.defaultBudget;
       const entries = loadAllEntries(hippoRoot);
-      const results = await hybridSearch(query, entries, { budget, hippoRoot });
+      const usePhysics = config.physics?.enabled !== false;
+      const results = usePhysics
+        ? await physicsSearch(query, entries, { budget, hippoRoot, physicsConfig: config.physics })
+        : await hybridSearch(query, entries, { budget, hippoRoot });
 
       // Mark retrieved and persist
       const retrieved = markRetrieved(results.map((r) => r.entry));
@@ -303,7 +306,10 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       if (!query) query = 'project context general';
 
       const entries = loadAllEntries(hippoRoot);
-      const results = await hybridSearch(query, entries, { budget, hippoRoot });
+      const usePhysicsCtx = config.physics?.enabled !== false;
+      const results = usePhysicsCtx
+        ? await physicsSearch(query, entries, { budget, hippoRoot, physicsConfig: config.physics })
+        : await hybridSearch(query, entries, { budget, hippoRoot });
       const retrieved = markRetrieved(results.map((r) => r.entry));
       for (const entry of retrieved) writeEntry(hippoRoot, entry);
       lastRecalledIds = retrieved.map((e) => e.id);
