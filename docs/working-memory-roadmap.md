@@ -1,5 +1,7 @@
 # Hippo Roadmap: Explicit Working Memory, Session Continuity, and Operational Stability
 
+> **Status: COMPLETED.** All PRs (1-4) shipped in v0.9.0. This roadmap is archived for reference. See CHANGELOG.md for current feature history.
+
 ## Why this roadmap changed
 The first draft was directionally right but too generic.
 After inspecting the real `hippo` repo, the immediate gaps are narrower and the best first PR is smaller.

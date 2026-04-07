@@ -47,6 +47,9 @@ That's it. You have a memory system.
 
 - **Active invalidation.** `hippo learn --git` detects migration and breaking-change commits and actively weakens memories referencing the old pattern. Manual invalidation via `hippo invalidate "REST API" --reason "migrated to GraphQL"`.
 - **Architectural decisions.** `hippo decide` stores one-off decisions with 90-day half-life and verified confidence. Supports `--context` for reasoning and `--supersedes` to chain decisions when the architecture evolves.
+- **Path-based memory triggers.** Memories auto-tagged with `path:<segment>` from your working directory. Recall boosts memories from the same location (up to 1.3x). Working in `src/api/`? API-related memories surface first.
+- **OpenCode integration.** `hippo hook install opencode` patches AGENTS.md. Auto-detected during `hippo init`. Integration guide with MCP config and skill for progressive discovery.
+- **`hippo export`** outputs all memories as JSON or markdown.
 - **Decision recall boost.** 1.2x scoring multiplier for decision-tagged memories so they surface despite low retrieval frequency.
 
 ### What's new in v0.9.1

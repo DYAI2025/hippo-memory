@@ -134,6 +134,56 @@ For agents that accept structured tool definitions:
     "description": "Check memory health. Returns counts, average strength, at-risk memories, and last consolidation time.",
     "parameters": {},
     "command": "hippo status"
+  },
+  {
+    "name": "memory_invalidate",
+    "description": "Actively weaken memories matching an old pattern. Use after migrations or breaking changes.",
+    "parameters": {
+      "pattern": {
+        "type": "string",
+        "description": "The old pattern to invalidate (e.g. 'REST API', 'webpack')"
+      },
+      "reason": {
+        "type": "string",
+        "description": "What replaced it (optional)"
+      }
+    },
+    "command": "hippo invalidate {pattern} [--reason {reason}]"
+  },
+  {
+    "name": "memory_decide",
+    "description": "Record an architectural decision with 90-day half-life. Decisions survive longer than normal memories.",
+    "parameters": {
+      "decision": {
+        "type": "string",
+        "description": "The decision made"
+      },
+      "context": {
+        "type": "string",
+        "description": "Why this decision was made (optional)"
+      },
+      "supersedes": {
+        "type": "string",
+        "description": "ID of previous decision this replaces (optional)"
+      }
+    },
+    "command": "hippo decide {decision} [--context {context}] [--supersedes {supersedes}]"
+  },
+  {
+    "name": "memory_export",
+    "description": "Export all memories to a file. Supports JSON and markdown formats.",
+    "parameters": {
+      "file": {
+        "type": "string",
+        "description": "Output file path (optional, prints to stdout if omitted)"
+      },
+      "format": {
+        "type": "string",
+        "description": "Output format: json (default) or markdown",
+        "default": "json"
+      }
+    },
+    "command": "hippo export [file] [--format {format}]"
   }
 ]
 ```
@@ -142,8 +192,20 @@ For agents that accept structured tool definitions:
 
 ## MCP server configuration
 
-If you're using MCP-compatible clients, you can wrap Hippo as an MCP server.
-A native MCP wrapper is on the roadmap. For now, use the shell tool above.
+Hippo ships with a native MCP server. Add to your client config:
+
+```json
+{
+  "mcpServers": {
+    "hippo-memory": {
+      "command": "hippo",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Exposes 10 tools: recall, remember, outcome, context, status, learn, conflicts, resolve, share, peers.
 
 ---
 
@@ -157,6 +219,8 @@ Agents that want to understand what they're working with:
 - Positive outcome: +5 days to half-life
 - Negative outcome: -3 days to half-life
 - Pin: no decay
+- Decision (`hippo decide`): 90-day half-life
+- Recall boost: 1.2x for decisions, up to 1.3x for path-matching memories
 - Consolidation removes memories below strength 0.05
 
 Strength at any point: `base * (0.5 ^ (days_since_retrieval / half_life)) * retrieval_boost`

@@ -63,6 +63,10 @@ Same pattern: point at `hippo mcp` as the command.
 | `hippo_context` | Smart context from git state |
 | `hippo_status` | Memory health check |
 | `hippo_learn` | Scan git commits for lessons |
+| `hippo_conflicts` | List detected memory conflicts |
+| `hippo_resolve` | Resolve a conflict (keep winner, weaken/delete loser) |
+| `hippo_share` | Share a memory to global store with transfer scoring |
+| `hippo_peers` | List projects contributing to global store |
 
 ## Prerequisites
 

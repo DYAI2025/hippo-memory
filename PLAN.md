@@ -259,6 +259,15 @@ Ship the smallest thing that demonstrates the core insight (decay + retrieval st
 - [x] Persistent stale-memory lifecycle during `hippo sleep`
 - [x] Conflict detection + `hippo conflicts`
 - [x] MCP server parity for snapshots/status
+- [x] Working memory layer (`hippo wm push/read/clear/flush`)
+- [x] Session handoffs (`hippo handoff create/latest/show`)
+- [x] Explainable recall (`hippo recall --why`)
+- [x] Auto-sleep on Claude Code session exit (Stop hook)
+- [x] Active invalidation (`hippo invalidate`, auto-detect in `hippo learn --git`)
+- [x] Architectural decisions (`hippo decide --context --supersedes`, 90-day half-life)
+- [x] Path-based memory triggers (auto-tag with cwd, recall boost up to 1.3x)
+- [x] OpenCode integration (`hippo hook install opencode`)
+- [x] `hippo export` (JSON or markdown)
 
 ### Out (v0.2+):
 - [x] Embedding-based hybrid search (BM25 + cosine, optional @xenova/transformers)
