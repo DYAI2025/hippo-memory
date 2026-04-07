@@ -85,6 +85,7 @@ import {
   isGitRepo,
 } from './autolearn.js';
 import { extractInvalidationTarget, invalidateMatching, InvalidationTarget } from './invalidation.js';
+import { extractPathTags } from './path-context.js';
 import {
   getGlobalRoot,
   initGlobal,
@@ -356,6 +357,12 @@ function cmdRemember(
     confidence,
     schema_fit: schemaFit,
   });
+
+  // Auto-tag with path context
+  const pathTags = extractPathTags(process.cwd());
+  for (const pt of pathTags) {
+    if (!entry.tags.includes(pt)) entry.tags.push(pt);
+  }
 
   writeEntry(targetRoot, entry);
   updateStats(targetRoot, { remembered: 1 });
@@ -1518,6 +1525,12 @@ function learnFromRepo(
       schema_fit: schemaFitVal,
     });
 
+    // Auto-tag with path context from the repo being learned
+    const learnPathTags = extractPathTags(repoPath);
+    for (const pt of learnPathTags) {
+      if (!entry.tags.includes(pt)) entry.tags.push(pt);
+    }
+
     writeEntry(hippoRoot, entry);
     updateStats(hippoRoot, { remembered: 1 });
 
@@ -2605,6 +2618,13 @@ async function main(): Promise<void> {
         source: 'decision',
       });
       mem.half_life_days = DECISION_HALF_LIFE_DAYS;
+
+      // Auto-tag with path context
+      const decisionPathTags = extractPathTags(process.cwd());
+      for (const pt of decisionPathTags) {
+        if (!mem.tags.includes(pt)) mem.tags.push(pt);
+      }
+
       writeEntry(hippoRoot, mem);
 
       console.log(`Decision recorded: ${mem.id}`);

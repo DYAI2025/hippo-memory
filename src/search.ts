@@ -4,6 +4,7 @@
  */
 
 import { MemoryEntry, calculateStrength } from './memory.js';
+import { extractPathTags, pathOverlapScore } from './path-context.js';
 import {
   isEmbeddingAvailable,
   getEmbedding,
@@ -169,6 +170,7 @@ export async function hybridSearch(
 
   // Score each entry
   const scored: SearchResult[] = [];
+  const currentPathTags = extractPathTags(process.cwd());
 
   for (let i = 0; i < entries.length; i++) {
     const rawBm25 = bm25Scores[i];
@@ -201,6 +203,12 @@ export async function hybridSearch(
     // Decision-tagged memories get a 1.2x recall boost
     const decisionBoost = entries[i].tags.includes('decision') ? 1.2 : 1.0;
     compositeScore *= decisionBoost;
+
+    // Path-based boost: memories tagged with matching path segments get up to 1.3x
+    const memPathTags = entries[i].tags.filter(t => t.startsWith('path:'));
+    const pathScore = pathOverlapScore(memPathTags, currentPathTags);
+    const pathBoost = 1.0 + (pathScore * 0.3);
+    compositeScore *= pathBoost;
 
     if (compositeScore <= 0) continue;
 
@@ -252,6 +260,7 @@ export function search(
 
   // Score each entry
   const scored: SearchResult[] = [];
+  const currentPathTagsSync = extractPathTags(process.cwd());
   for (let i = 0; i < entries.length; i++) {
     const bm25 = bm25Score(corpus, i, queryTerms);
     if (bm25 <= 0) continue;
@@ -267,6 +276,12 @@ export function search(
     // Decision-tagged memories get a 1.2x recall boost
     const decisionBoost = entries[i].tags.includes('decision') ? 1.2 : 1.0;
     composite *= decisionBoost;
+
+    // Path-based boost: memories tagged with matching path segments get up to 1.3x
+    const memPathTagsSync = entries[i].tags.filter(t => t.startsWith('path:'));
+    const pathScoreSync = pathOverlapScore(memPathTagsSync, currentPathTagsSync);
+    const pathBoostSync = 1.0 + (pathScoreSync * 0.3);
+    composite *= pathBoostSync;
 
     const tokens = estimateTokens(entries[i].content);
 
