@@ -685,6 +685,8 @@ The 7 mechanisms in full: [PLAN.md#core-principles](PLAN.md#core-principles)
 
 For how these mechanisms connect to LLM training, continual learning, and open research problems: **[RESEARCH.md](RESEARCH.md)**
 
+**Related work:** [HippoRAG](https://arxiv.org/abs/2405.14831) (Gutierrez et al., 2024) applies hippocampal indexing to RAG via knowledge graphs. Complementary approach — HippoRAG optimizes retrieval quality, Hippo optimizes memory lifecycle. Same brain region, different mechanisms.
+
 ---
 
 ## Comparison

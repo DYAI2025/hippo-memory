@@ -129,6 +129,12 @@ The end state is not an external tool. It's LLMs that have hippocampal circuits 
 
 Hippo is the prototype. The data it generates is the evidence base. The research above is the bridge.
 
+## Related Work
+
+### HippoRAG
+
+[HippoRAG](https://arxiv.org/abs/2405.14831) (Gutierrez et al., 2024) applies hippocampal indexing theory to retrieval-augmented generation, using knowledge graphs as an analog to the entorhinal cortex's pattern separation. The approach is complementary but distinct from Hippo's: HippoRAG focuses on retrieval quality via graph-based indexing, while Hippo focuses on memory lifecycle (decay, consolidation, invalidation). The name overlap reflects shared neuroscience inspiration, not shared techniques.
+
 ## References
 
 - McClelland, J.L., McNaughton, B.L., & O'Reilly, R.C. (1995). Why there are complementary learning systems in the hippocampus and neocortex. *Psychological Review*.

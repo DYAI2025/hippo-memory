@@ -2216,6 +2216,8 @@ Commands:
     --dry-run              Preview without writing
     --global               Write to global store (~/.hippo/)
     --tag <tag>            Add extra tag (repeatable)
+  export [file]            Export all memories (default: stdout)
+    --format <fmt>         Output format: json (default) or markdown
   capture                  Extract memories from conversation text
     --stdin                Read from piped input
     --file <path>          Read from a file
@@ -2273,6 +2275,8 @@ Examples:
   hippo hook install claude-code
   hippo decide "Use PostgreSQL for new services" --context "JSONB support"
   hippo invalidate "REST API" --reason "migrated to GraphQL"
+  hippo export memories.json
+  hippo export --format markdown memories.md
   hippo sleep --dry-run
   hippo outcome --good
   hippo status
@@ -2467,6 +2471,38 @@ async function main(): Promise<void> {
     case 'import':
       cmdImport(hippoRoot, args, flags);
       break;
+
+    case 'export': {
+      requireInit(hippoRoot);
+      const format = (flags['format'] as string) || 'json';
+      const outputPath = args[0] || null;
+      const entries = loadAllEntries(hippoRoot);
+
+      let output: string;
+      if (format === 'markdown' || format === 'md') {
+        output = entries.map(e => {
+          const meta = [
+            `id: ${e.id}`,
+            `created: ${e.created}`,
+            `tags: ${e.tags.join(', ')}`,
+            `confidence: ${e.confidence}`,
+            `half_life: ${e.half_life_days}d`,
+            `strength: ${e.strength.toFixed(2)}`,
+          ].join(' | ');
+          return `### ${e.id}\n\n${e.content}\n\n_${meta}_`;
+        }).join('\n\n---\n\n');
+      } else {
+        output = JSON.stringify(entries, null, 2);
+      }
+
+      if (outputPath) {
+        fs.writeFileSync(outputPath, output, 'utf8');
+        console.log(`Exported ${entries.length} memories to ${outputPath}`);
+      } else {
+        console.log(output);
+      }
+      break;
+    }
 
     case 'capture': {
       let captureSource: CaptureOptions['source'] | null = null;
