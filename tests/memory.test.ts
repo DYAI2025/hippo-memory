@@ -182,27 +182,30 @@ describe('Decay basis modes', () => {
     expect(s).toBeCloseTo(0.5, 1);
   });
 
-  it('session mode: decays by sleep cycle count', () => {
+  it('session mode: decays by estimated session count', () => {
     const entry = makeAged();
-    // 3 sleep cycles since last retrieval, with 7-day half-life
+    // Agent runs every 3.5 days on average. 7 days / 3.5 = 2 sessions elapsed.
     const s = calculateStrength(entry, now, {
       decayBasis: 'session',
-      sleepCount: 10,
-      sleepCountAtLastRetrieval: 7,
+      avgSessionIntervalDays: 3.5,
     });
-    // 3 sessions / 7 half-life = 0.5^(3/7) ≈ 0.743
-    expect(s).toBeCloseTo(0.743, 2);
+    // 2 sessions / 7 half-life = 0.5^(2/7) ≈ 0.820
+    expect(s).toBeCloseTo(0.820, 2);
   });
 
-  it('session mode: no decay when sleepCount equals last retrieval count', () => {
+  it('session mode: weekly agent decays slower than daily agent', () => {
     const entry = makeAged();
-    const s = calculateStrength(entry, now, {
+    const sDaily = calculateStrength(entry, now, {
       decayBasis: 'session',
-      sleepCount: 5,
-      sleepCountAtLastRetrieval: 5,
+      avgSessionIntervalDays: 1,
     });
-    // 0 sessions since retrieval = no decay
-    expect(s).toBeCloseTo(1.0, 1);
+    const sWeekly = calculateStrength(entry, now, {
+      decayBasis: 'session',
+      avgSessionIntervalDays: 7,
+    });
+    // Weekly agent: 7 days / 7 = 1 session. Daily: 7 days / 1 = 7 sessions.
+    // Fewer sessions = less decay = higher strength.
+    expect(sWeekly).toBeGreaterThan(sDaily);
   });
 
   it('adaptive mode: scales half-life by session interval', () => {

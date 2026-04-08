@@ -72,12 +72,10 @@ export function calculateRewardFactor(entry: MemoryEntry): number {
  */
 export interface DecayOptions {
   decayBasis?: 'clock' | 'session' | 'adaptive';
-  /** Average interval between sleep cycles, in days. Used by 'adaptive' mode. */
+  /** Average interval between sleep cycles, in days. Used by 'adaptive' and 'session' modes. */
   avgSessionIntervalDays?: number;
-  /** Total sleep cycles completed. Used by 'session' mode. */
+  /** Total sleep cycles completed. Used by consolidation tracking. */
   sleepCount?: number;
-  /** Sleep count at memory's last retrieval. Defaults to 0. Used by 'session' mode. */
-  sleepCountAtLastRetrieval?: number;
 }
 
 /**
@@ -112,10 +110,10 @@ export function calculateStrength(
   let decayExponent: number;
 
   if (basis === 'session') {
-    // Decay by session count: each sleep cycle = 1 "day" in the decay formula
-    const currentCount = options.sleepCount ?? 0;
-    const lastCount = options.sleepCountAtLastRetrieval ?? 0;
-    const sessionsSince = Math.max(0, currentCount - lastCount);
+    // Decay by session count: each sleep cycle = 1 "day" in the decay formula.
+    // Estimate sessions since last retrieval from wall-clock time and avg interval.
+    const avgInterval = options.avgSessionIntervalDays ?? 1;
+    const sessionsSince = avgInterval > 0 ? Math.max(0, daysSince / avgInterval) : daysSince;
     decayExponent = sessionsSince / effectiveHalfLife;
   } else if (basis === 'adaptive') {
     // Scale half-life by session frequency: infrequent agents get longer half-lives
