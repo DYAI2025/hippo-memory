@@ -120,6 +120,18 @@ Test whether memories learned by Agent A on Project X transfer usefully to Agent
 - Which are too project-specific to transfer? (file paths, variable names, specific API endpoints)
 - Can schema_fit predict transferability?
 
+### 5. AI Pineal Gland — Intuition and Awareness Module
+
+Build an intuition/awareness layer on top of hippo's existing infrastructure. Three components:
+
+**Ambient state vector.** A continuous background representation of the agent's context. The physics simulation already models this: particle positions encode semantic relationships, velocities encode recent trajectory, and system energy captures overall memory coherence. Extend this into a compact state vector that's injected alongside memory context, giving the agent a "feel" for its knowledge landscape without retrieving specific memories.
+
+**Fast-path heuristic (System 1).** A lightweight pre-generation check that runs before the full LLM call. Given the ambient state + the incoming prompt, predict whether the agent has relevant knowledge, is entering familiar vs novel territory, or is about to repeat a known mistake. This parallels OpenClaw's ClawRouter (`classifyByRules`) which classifies prompts across 7 dimensions to route to different model tiers. The pineal gland version would classify prompts against the memory state.
+
+**Salience gate.** Filters what deserves attention vs noise. Currently hippo's search scoring + token budget system does this at retrieval time. The salience gate would operate earlier — at memory *creation* time — deciding what's worth storing and at what priority. Schema fit already does a version of this (high-fit memories consolidate faster). A salience gate would make the decision explicit: "this error is novel and important" vs "this is the 5th timeout in a row, skip it."
+
+The physics engine is the natural substrate. Ambient state = system energy + velocity distribution. Fast-path = cosine between query embedding and particle cluster centroids (sub-millisecond). Salience = rate of change in the state vector after a new memory is added.
+
 ## Long-term vision
 
 The end state is not an external tool. It's LLMs that have hippocampal circuits built into their architecture:
