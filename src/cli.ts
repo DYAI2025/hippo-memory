@@ -559,6 +559,17 @@ function cmdSleep(
   }
 
   if (dryRun) console.log('\n(dry run  - nothing written)');
+
+  // Auto-share high-transfer-score memories to global (unless --no-share or dry-run)
+  if (!dryRun && !flags['no-share']) {
+    const sleepConfig = loadConfig(hippoRoot);
+    if (sleepConfig.autoShareOnSleep) {
+      const shared = autoShare(hippoRoot, { minScore: 0.6 });
+      if (shared.length > 0) {
+        console.log(`\nAuto-shared ${shared.length} high-value memories to global store.`);
+      }
+    }
+  }
 }
 
 function cmdStatus(hippoRoot: string): void {
@@ -2287,9 +2298,10 @@ Commands:
     --budget <n>           Token budget (default: 1500)
     --format <fmt>         Output format: markdown (default) or json
     --framing <mode>       Framing: observe (default), suggest, assert
-  sleep                    Run consolidation pass (auto-learns from git first)
+  sleep                    Run consolidation pass (auto-learns + auto-shares)
     --dry-run              Preview without writing
     --no-learn             Skip auto git-learn before consolidation
+    --no-share             Skip auto-sharing to global store
   status                   Show memory health stats
   outcome                  Apply feedback to last recall
     --good                 Memories were helpful

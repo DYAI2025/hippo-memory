@@ -14,6 +14,7 @@ export interface HippoConfig {
   defaultContextBudget: number;
   decayBasis: DecayBasis;
   autoLearnOnSleep: boolean;
+  autoShareOnSleep: boolean;
   autoSleep: {
     enabled: boolean;
     threshold: number;  // trigger sleep after this many new memories
@@ -36,6 +37,7 @@ const DEFAULT_CONFIG: HippoConfig = {
   defaultContextBudget: 3000,
   decayBasis: 'adaptive',
   autoLearnOnSleep: true,
+  autoShareOnSleep: true,
   autoSleep: {
     enabled: true,
     threshold: 50,
@@ -68,6 +70,7 @@ export function loadConfig(hippoRoot: string): HippoConfig {
       defaultContextBudget: raw.defaultContextBudget ?? DEFAULT_CONFIG.defaultContextBudget,
       decayBasis: validBasis ? basis : DEFAULT_CONFIG.decayBasis,
       autoLearnOnSleep: raw.autoLearnOnSleep ?? DEFAULT_CONFIG.autoLearnOnSleep,
+      autoShareOnSleep: raw.autoShareOnSleep ?? DEFAULT_CONFIG.autoShareOnSleep,
       autoSleep: { ...DEFAULT_CONFIG.autoSleep, ...(raw.autoSleep ?? {}) },
       embeddings: { ...DEFAULT_CONFIG.embeddings, ...(raw.embeddings ?? {}) },
       global: { ...DEFAULT_CONFIG.global, ...(raw.global ?? {}) },
