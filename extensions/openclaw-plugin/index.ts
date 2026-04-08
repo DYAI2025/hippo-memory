@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { basename as posixBasename, dirname as posixDirname } from 'path/posix';
 
@@ -163,6 +163,30 @@ function formatToolErrorMemory(toolName: string, error: string): string {
   return `Tool '${toolName}' failed: ${truncated}${suffix}`;
 }
 
+/**
+ * Remove stale hippo-memory.bak-* directories from the OpenClaw extensions folder.
+ * These are left behind by plugin updates and cause duplicate plugin ID errors on boot.
+ */
+function cleanupBackupPlugins(logger?: { info?: (...args: unknown[]) => void }): void {
+  try {
+    const extensionsDir = join(
+      process.env.USERPROFILE || process.env.HOME || '',
+      '.openclaw', 'extensions'
+    );
+    if (!existsSync(extensionsDir)) return;
+
+    for (const entry of readdirSync(extensionsDir)) {
+      if (entry.startsWith('hippo-memory.bak')) {
+        const fullPath = join(extensionsDir, entry);
+        rmSync(fullPath, { recursive: true, force: true });
+        logger?.info?.(`[hippo] Removed stale backup: ${entry}`);
+      }
+    }
+  } catch {
+    // Best-effort cleanup — don't break boot
+  }
+}
+
 function hippoRememberSucceeded(result: string): boolean {
   return result.includes('Remembered [');
 }
@@ -183,6 +207,9 @@ function runHippo(args: readonly string[], cwd?: string): string {
 
 export default function register(api: any) {
   const logger = api.logger ?? console;
+
+  // Clean up stale backup plugins from previous updates
+  cleanupBackupPlugins(logger);
 
   // --- Tool: hippo_recall ---
   api.registerTool((ctx: HippoRuntimeContext) => ({

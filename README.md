@@ -43,6 +43,10 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
+### What's new in v0.14.0
+
+- **OpenClaw backup cleanup.** Plugin updates no longer leave `hippo-memory.bak-*` directories that cause duplicate plugin ID errors. Cleanup runs automatically at boot.
+
 ### What's new in v0.13.3
 
 - **Final polish.** 8 remaining review findings fixed: ROLLBACK safety, MCP protocol compliance, dead code removal, atomic write cleanup, env var trimming, ESM import consistency.

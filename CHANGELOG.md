@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.0 (2026-04-08)
+
+### Added
+- **Automatic backup cleanup on OpenClaw boot.** The plugin now removes stale `hippo-memory.bak-*` directories from `~/.openclaw/extensions/` at registration time. These leftovers from plugin updates cause duplicate plugin ID errors on next boot.
+
 ## 0.13.3 (2026-04-08)
 
 ### Fixed
