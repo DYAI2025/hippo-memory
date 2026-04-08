@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0 (2026-04-08)
+
+### Added
+- **Auto-learn from git on init.** `hippo init` now seeds the store with 30 days of git history on first setup. New users get instant memory from their commit history. Skip with `--no-learn`.
+- **Auto-learn from git on sleep.** `hippo sleep` now runs `learn --git --days 1` before consolidation, capturing recent commit lessons automatically. Configurable via `autoLearnOnSleep` in config (default: true). Skip with `--no-learn`.
+
 ## 0.15.0 (2026-04-08)
 
 ### Added

@@ -43,6 +43,10 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
+### What's new in v0.16
+
+- **Auto-learn from git.** `hippo init` seeds the store with 30 days of commit history. `hippo sleep` captures today's commits before consolidation. New users get instant memory; existing users get continuous learning. Both skippable with `--no-learn`.
+
 ### What's new in v0.15
 
 - **Adaptive decay for intermittent agents.** Memories now decay based on how often the agent actually runs, not wall-clock time. A weekly agent's memories persist ~7x longer automatically. Three modes via `decayBasis` in `.hippo/config.json`: `"adaptive"` (default), `"session"`, or `"clock"`.
