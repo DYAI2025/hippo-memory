@@ -4,6 +4,7 @@
 
 ### Fixed
 - **OpenClaw plugin: error capture filtering.** The `autoLearn` hook now filters tool errors before storing them as memories. Three filters prevent memory pollution: a noise pattern filter (skips known transient errors like browser timeouts, `ECONNREFUSED`, image path restrictions, `Navigation timeout`), a per-session rate limit (max 5 error memories), and per-session deduplication (same error from same tool captured only once). Previously, every tool failure was stored, causing up to 78% of all memories to be garbage error noise that consolidation then amplified into hundreds of synthetic semantic memories.
+- **Orphaned embedding pruning.** `hippo embed` now removes cached vectors for memories that no longer exist. Previously, embedding vectors accumulated indefinitely after memory deletion. `hippo status` and `hippo embed --status` now show orphan counts with a prune hint.
 
 ## 0.10.0 (2026-04-07)
 
