@@ -43,6 +43,10 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
+### What's new in v0.13.2
+
+- **7 more bug fixes** from second deep review: Windows schtasks injection, MCP error handling, cross-store budget consistency, embedding mutex, and more. See CHANGELOG.
+
 ### What's new in v0.13.0
 
 - **Security: command injection fixed.** OpenClaw plugin now uses `execFileSync` (no shell). All user input is passed as array args, eliminating shell injection vectors.

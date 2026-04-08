@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.2 (2026-04-08)
+
+### Fixed
+- **Windows schtasks `%` expansion.** Schedule setup now rejects paths containing `%` on Windows, preventing environment variable injection in Task Scheduler commands. Also fixed quote escaping from `\"` to `""` (correct for `schtasks /tr`).
+- **MCP `conflict_id: 0` rejected.** The `!conflictId` check treated ID `0` as invalid due to JavaScript's `!0 === true`. Now uses `isNaN()`.
+- **MCP swallowed async errors.** Failed tool executions now send a JSON-RPC error response instead of silently dropping, preventing clients from hanging.
+- **Cross-store budget loop inconsistency.** `searchBoth` and `searchBothHybrid` now always include the first result regardless of budget, matching the fix applied to `search.ts` in v0.13.0.
+- **Autolearn env var regex false positives.** Regex anchored to only strip leading `KEY=val` assignments, no longer matching `--ARG=val` mid-command.
+- **`bufferToFloat32` crash on corrupt data.** Returns empty array for buffers not divisible by 4 bytes instead of throwing.
+- **`embedAll` race condition.** Now uses the same `withEmbedLock` mutex as `embedMemory`, preventing concurrent read-modify-write on `embeddings.json`.
+
 ## 0.13.1 (2026-04-08)
 
 ### Reverted
