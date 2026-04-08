@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.2 (2026-04-08)
+
+### Fixed
+- **Cross-platform path handling in OpenClaw plugin.** `resolveHippoCwd()` now uses `path/posix` after normalizing backslashes, so Windows-style paths like `C:\repo\.hippo` are correctly parsed on Unix systems. Previously, `path.basename` on Unix treated backslashes as valid filename characters, causing `.hippo` detection to fail. Closes #6.
+
 ## 0.11.1 (2026-04-07)
 
 ### Fixed

@@ -43,6 +43,10 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
+### What's new in v0.11.2
+
+- **Cross-platform path fix.** OpenClaw plugin now correctly resolves `.hippo` paths on Unix when given Windows-style backslash paths. Uses `path/posix` instead of platform-dependent `path.basename`.
+
 ### What's new in v0.11.1
 
 - **OpenClaw error capture filtering.** The `autoLearn` hook now applies three filters before storing tool errors: a noise pattern filter for known transient errors, per-session rate limiting (max 5), and per-session deduplication. Prevents memory pollution from infrastructure noise.
