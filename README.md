@@ -6,7 +6,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
 ```
-Works with:  Claude Code, Codex, Cursor, OpenClaw, OpenCode, any CLI agent
+Works with:  Claude Code, Codex, Cursor, OpenClaw, OpenCode, Pi, any CLI agent
 Imports from: ChatGPT, Claude (CLAUDE.md), Cursor (.cursorrules), any markdown
 Storage:     SQLite backbone + markdown/YAML mirrors. Git-trackable and human-readable.
 Dependencies: Zero runtime deps. Requires Node.js 22.5+. Optional embeddings via @xenova/transformers.

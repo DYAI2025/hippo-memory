@@ -317,6 +317,7 @@ function autoInstallHooks(quiet: boolean): void {
     { files: ['.cursorrules', '.cursor/rules'], hook: 'cursor' },
     { files: ['.openclaw', 'AGENTS.md'], hook: 'openclaw' },
     { files: ['.opencode', 'opencode.json'], hook: 'opencode' },
+    { files: ['.pi', '.pi/agent'], hook: 'pi' },
   ];
 
   // Track which hook files we've already touched to avoid double-patching AGENTS.md
@@ -2051,6 +2052,36 @@ hippo outcome --good
 \`\`\`
 `.trim(),
   },
+  'pi': {
+    file: 'AGENTS.md',
+    description: 'Pi',
+    content: `
+## Project Memory (Hippo)
+
+At the start of every session, run:
+\`\`\`bash
+hippo context --auto --budget 1500
+\`\`\`
+Read the output before writing any code.
+
+On errors or unexpected behaviour:
+\`\`\`bash
+hippo remember "<description of what went wrong>" --error
+\`\`\`
+
+On task completion:
+\`\`\`bash
+hippo outcome --good
+\`\`\`
+
+After significant coding sessions:
+\`\`\`bash
+hippo learn --git
+\`\`\`
+
+For full integration, copy the hippo-memory Pi extension to \`~/.pi/agent/extensions/hippo-memory/\`.
+`.trim(),
+  },
 };
 
 function cmdHook(
@@ -2472,7 +2503,7 @@ Commands:
     --global               Write to global store ($HIPPO_HOME or ~/.hippo/)
   hook <sub> [target]      Manage framework integrations
     hook list              Show available hooks
-    hook install <target>  Install hook (claude-code|codex|cursor|openclaw|opencode)
+    hook install <target>  Install hook (claude-code|codex|cursor|openclaw|opencode|pi)
                            claude-code also installs Stop hook (hippo sleep on exit)
     hook uninstall <target> Remove hook
   decide "<decision>"      Record an architectural decision (90-day half-life)
