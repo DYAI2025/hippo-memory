@@ -26,7 +26,7 @@ export function captureError(
   const content = `Command '${safeCmd}' failed (exit ${exitCode}): ${truncated}${suffix}`;
 
   // Derive a sanitized tag from the command name (first word, strip path)
-  const cmdBase = command.trim().split(/\s+/)[0].replace(/[^a-zA-Z0-9-]/g, '');
+  const cmdBase = safeCmd.split(/\s+/)[0].replace(/[^a-zA-Z0-9-]/g, '');
   const tags = ['error', 'autolearn'];
   if (cmdBase) tags.push(cmdBase.toLowerCase().slice(0, 30));
 

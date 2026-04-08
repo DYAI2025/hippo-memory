@@ -282,7 +282,9 @@ function autoInstallHooks(quiet: boolean): void {
 function setupDailySchedule(hippoRoot: string): void {
   const projectDir = path.resolve(path.dirname(hippoRoot));
   // Reject paths with characters that could break shell/crontab quoting
-  if (/["`$\n\r\\]/.test(projectDir)) {
+  // (backslash is normal on Windows, only dangerous in Unix shell/crontab)
+  const unsafeChars = process.platform === 'win32' ? /["`$\n\r]/ : /["`$\n\r\\]/;
+  if (unsafeChars.test(projectDir)) {
     console.log(`   Skipping schedule: project path contains unsafe characters.`);
     return;
   }
