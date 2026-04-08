@@ -163,7 +163,12 @@ export function saveEmbeddingIndex(hippoRoot: string, index: Record<string, numb
   const fp = path.join(hippoRoot, EMBEDDINGS_FILE);
   const tmp = fp + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(index), 'utf8');
-  fs.renameSync(tmp, fp);
+  try {
+    fs.renameSync(tmp, fp);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+    throw err;
+  }
 }
 
 // Mutex to serialize embedding writes and prevent read-modify-write races

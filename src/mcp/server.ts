@@ -21,6 +21,7 @@ import { search, hybridSearch, physicsSearch, markRetrieved, estimateTokens } fr
 import { loadAllEntries, writeEntry, readEntry, initStore, loadActiveTaskSnapshot, listMemoryConflicts, resolveConflict } from '../store.js';
 import { shareMemory, listPeers, getGlobalRoot } from '../shared.js';
 import { consolidate } from '../consolidate.js';
+import { execSync } from 'child_process';
 import { fetchGitLog, extractLessons, deduplicateLesson, isGitRepo } from '../autolearn.js';
 import { loadConfig } from '../config.js';
 import { resolveConfidence } from '../memory.js';
@@ -295,7 +296,6 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       // Auto-detect query from git
       let query = '';
       try {
-        const { execSync } = require('child_process');
         const branch = execSync('git rev-parse --abbrev-ref HEAD 2>/dev/null', { encoding: 'utf-8' }).trim();
         const diff = execSync('git diff --cached --stat 2>/dev/null', { encoding: 'utf-8' }).trim();
         const log = execSync('git log -1 --pretty=format:"%s" 2>/dev/null', { encoding: 'utf-8' }).trim();
@@ -456,6 +456,8 @@ async function handleRequest(req: McpRequest): Promise<McpResponse | null> {
     }
 
     default:
+      // Notifications (no id) must not receive a response
+      if (method.startsWith('notifications/')) return null;
       return {
         jsonrpc: '2.0',
         id,

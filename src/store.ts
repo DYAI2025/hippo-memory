@@ -918,7 +918,7 @@ export function rebuildIndex(hippoRoot: string): HippoIndex {
         }
         db.exec('COMMIT');
       } catch (err) {
-        db.exec('ROLLBACK');
+        try { db.exec('ROLLBACK'); } catch { /* ignore if no active txn */ }
         throw err;
       }
     }

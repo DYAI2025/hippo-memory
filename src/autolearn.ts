@@ -3,7 +3,7 @@
  * Agents learn from failures without explicit hippo remember calls.
  */
 
-import { execSync, spawn } from 'child_process';
+import { execSync, execFileSync, spawn } from 'child_process';
 import { MemoryEntry, createMemory, Layer } from './memory.js';
 import { loadAllEntries } from './store.js';
 import { textOverlap } from './search.js';
@@ -21,8 +21,8 @@ export function captureError(
   const wasTruncated = stderr.length > 500;
   const truncated = stderr.slice(0, 500).trim();
   const suffix = wasTruncated ? ' [truncated]' : '';
-  // Strip leading env var assignments (KEY=val) before the actual command name
-  const safeCmd = command.replace(/^([A-Z_]+=\S+\s+)+/, '').trim() || '(redacted)';
+  // Strip leading env var assignments (KEY=val or key=val) before the actual command name
+  const safeCmd = command.replace(/^([A-Za-z_][A-Za-z0-9_]*=\S+\s+)+/, '').trim() || '(redacted)';
   const content = `Command '${safeCmd}' failed (exit ${exitCode}): ${truncated}${suffix}`;
 
   // Derive a sanitized tag from the command name (first word, strip path)
@@ -154,12 +154,10 @@ export function isGitRepo(cwd: string): boolean {
  */
 export function fetchGitLog(cwd: string, days: number): string {
   try {
-    const since = `--since="${days} days ago"`;
-    const raw = execSync(
-      `git log ${since} --pretty=format:"%s" 2>&1`,
-      { encoding: 'utf8', cwd, timeout: 10000 }
-    );
-    return raw;
+    const raw = execFileSync('git', [
+      'log', `--since=${days} days ago`, '--pretty=format:%s',
+    ], { encoding: 'utf8', cwd, timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] });
+    return typeof raw === 'string' ? raw : '';
   } catch {
     return '';
   }

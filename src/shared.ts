@@ -24,8 +24,10 @@ import { search, hybridSearch, SearchResult } from './search.js';
  * Resolution order: $HIPPO_HOME > $XDG_DATA_HOME/hippo > ~/.hippo/
  */
 export function getGlobalRoot(): string {
-  if (process.env.HIPPO_HOME) return process.env.HIPPO_HOME;
-  if (process.env.XDG_DATA_HOME) return path.join(process.env.XDG_DATA_HOME, 'hippo');
+  const hippoHome = process.env.HIPPO_HOME?.trim();
+  if (hippoHome) return hippoHome;
+  const xdgData = process.env.XDG_DATA_HOME?.trim();
+  if (xdgData) return path.join(xdgData, 'hippo');
   return path.join(os.homedir(), '.hippo');
 }
 

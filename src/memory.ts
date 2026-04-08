@@ -87,7 +87,7 @@ export function calculateStrength(entry: MemoryEntry, now: Date = new Date()): n
   const effectiveHalfLife = entry.half_life_days * rewardFactor;
 
   // Guard: zero half-life causes 0/0 = NaN in the exponent
-  if (effectiveHalfLife <= 0) return entry.pinned ? 1.0 : 0.0;
+  if (effectiveHalfLife <= 0) return 0.0;
 
   // Exponential decay: base * (0.5 ^ (days / effective_half_life))
   const decay = Math.pow(0.5, daysSince / effectiveHalfLife);
