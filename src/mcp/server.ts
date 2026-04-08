@@ -19,7 +19,7 @@ import {
 } from '../memory.js';
 import { search, hybridSearch, physicsSearch, markRetrieved, estimateTokens } from '../search.js';
 import { loadAllEntries, writeEntry, readEntry, initStore, loadActiveTaskSnapshot, listMemoryConflicts, resolveConflict } from '../store.js';
-import { shareMemory, listPeers } from '../shared.js';
+import { shareMemory, listPeers, getGlobalRoot } from '../shared.js';
 import { consolidate } from '../consolidate.js';
 import { fetchGitLog, extractLessons, deduplicateLesson, isGitRepo } from '../autolearn.js';
 import { loadConfig } from '../config.js';
@@ -37,9 +37,8 @@ function findHippoRoot(): string | null {
     if (parent === dir) break;
     dir = parent;
   }
-  // Global fallback
-  const home = process.env.USERPROFILE || process.env.HOME || '';
-  const global = path.join(home, '.hippo');
+  // Global fallback (respects $HIPPO_HOME / $XDG_DATA_HOME)
+  const global = getGlobalRoot();
   if (fs.existsSync(global)) return global;
   return null;
 }

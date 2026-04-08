@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.0 (2026-04-08)
+
+### Added
+- **Configurable global store location.** The global Hippo store now respects `$HIPPO_HOME`, then `$XDG_DATA_HOME/hippo`, falling back to `~/.hippo/`. Set `HIPPO_HOME=/path/to/hippo` to keep your home directory clean. Works across CLI, MCP server, and OpenClaw plugin. Closes #5.
+
 ## 0.11.2 (2026-04-08)
 
 ### Fixed

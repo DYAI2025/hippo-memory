@@ -98,4 +98,4 @@ To skip auto-detection: `hippo init --no-hooks`
 - Hippo stores everything in `.hippo/` in your project root. It's markdown on disk. Commit it or gitignore it, your call.
 - `--budget 3000` is a good default for Claude Code sessions. Increase for larger context tasks.
 - If the project has no `.hippo/` yet, run `hippo init` first.
-- For global memory across projects, initialize in `~/.hippo/` and call with `hippo --root ~/.hippo recall "..."`.
+- For global memory across projects, run `hippo init --global`. The global store defaults to `~/.hippo/` but respects `$HIPPO_HOME` and `$XDG_DATA_HOME/hippo`.

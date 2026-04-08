@@ -1,6 +1,7 @@
 /**
  * Cross-agent shared memory for Hippo.
- * Global store at ~/.hippo/ is shared across all projects.
+ * Global store is shared across all projects.
+ * Resolution: $HIPPO_HOME > $XDG_DATA_HOME/hippo > ~/.hippo/
  * Local .hippo/ stores are per-project.
  */
 
@@ -19,9 +20,12 @@ import {
 import { search, hybridSearch, SearchResult } from './search.js';
 
 /**
- * Returns the path to the global Hippo store: ~/.hippo/
+ * Returns the path to the global Hippo store.
+ * Resolution order: $HIPPO_HOME > $XDG_DATA_HOME/hippo > ~/.hippo/
  */
 export function getGlobalRoot(): string {
+  if (process.env.HIPPO_HOME) return process.env.HIPPO_HOME;
+  if (process.env.XDG_DATA_HOME) return path.join(process.env.XDG_DATA_HOME, 'hippo');
   return path.join(os.homedir(), '.hippo');
 }
 

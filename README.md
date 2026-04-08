@@ -43,6 +43,10 @@ hippo recall "data pipeline issues" --budget 2000
 
 That's it. You have a memory system.
 
+### What's new in v0.12.0
+
+- **Configurable global store.** Set `$HIPPO_HOME` or use XDG (`$XDG_DATA_HOME/hippo`) to put the global store wherever you want. Falls back to `~/.hippo/` if neither is set.
+
 ### What's new in v0.11.2
 
 - **Cross-platform path fix.** OpenClaw plugin now correctly resolves `.hippo` paths on Unix when given Windows-style backslash paths. Uses `path/posix` instead of platform-dependent `path.basename`.

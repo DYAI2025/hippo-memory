@@ -1736,7 +1736,7 @@ function cmdImport(
 
   const result = importer(filePath, importOptions);
 
-  const storeLabel = useGlobal ? `global (~/.hippo/)` : targetRoot;
+  const storeLabel = useGlobal ? `global (${getGlobalRoot()})` : targetRoot;
 
   console.log(`\nImport ${importerName}: ${filePath}`);
   console.log(`  Source entries found:  ${result.total}`);
@@ -2236,7 +2236,7 @@ Usage: hippo <command> [options]
 
 Commands:
   init                     Create .hippo/ structure in current directory
-    --global               Init the global store at ~/.hippo/
+    --global               Init the global store ($HIPPO_HOME or ~/.hippo/)
     --no-hooks             Skip auto-detecting and installing agent hooks
     --no-schedule          Skip auto-creating daily learn+sleep cron job
   remember <text>          Store a memory
@@ -2246,7 +2246,7 @@ Commands:
     --verified             Set confidence: verified (default)
     --observed             Set confidence: observed
     --inferred             Set confidence: inferred
-    --global               Store in global ~/.hippo/ store
+    --global               Store in global store ($HIPPO_HOME or ~/.hippo/)
   recall <query>           Search and retrieve memories (local + global)
     --budget <n>           Token budget (default: 4000)
     --json                 Output as JSON
@@ -2335,7 +2335,7 @@ Commands:
     --file <path>          Import from any markdown or text file
     --markdown <path>      Import from structured MEMORY.md / AGENTS.md
     --dry-run              Preview without writing
-    --global               Write to global store (~/.hippo/)
+    --global               Write to global store ($HIPPO_HOME or ~/.hippo/)
     --tag <tag>            Add extra tag (repeatable)
   export [file]            Export all memories (default: stdout)
     --format <fmt>         Output format: json (default) or markdown
@@ -2344,7 +2344,7 @@ Commands:
     --file <path>          Read from a file
     --last-session         (placeholder) Read from agent session logs
     --dry-run              Preview without writing
-    --global               Write to global store (~/.hippo/)
+    --global               Write to global store ($HIPPO_HOME or ~/.hippo/)
   hook <sub> [target]      Manage framework integrations
     hook list              Show available hooks
     hook install <target>  Install hook (claude-code|codex|cursor|openclaw|opencode)

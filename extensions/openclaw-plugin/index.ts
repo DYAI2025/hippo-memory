@@ -77,10 +77,13 @@ function getConfig(api: any): HippoConfig {
 function findHippoRoot(workspace?: string, configRoot?: string): string | null {
   if (configRoot && existsSync(configRoot)) return configRoot;
 
+  const home = process.env.USERPROFILE || process.env.HOME || '';
   const candidates = [
     workspace ? join(workspace, '.hippo') : null,
+    process.env.HIPPO_HOME,
     process.env.HIPPO_ROOT,
-    join(process.env.USERPROFILE || process.env.HOME || '', '.hippo'),
+    process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, 'hippo') : null,
+    home ? join(home, '.hippo') : null,
   ].filter(Boolean) as string[];
 
   for (const candidate of candidates) {
