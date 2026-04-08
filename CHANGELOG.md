@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.19.0 (2026-04-08)
+
+### Added
+- **Pi coding agent extension.** Native extension at `extensions/pi-extension/` with automatic context injection, error capture (noise filtered + rate limited + deduped), session-end consolidation, and 5 registered tools (hippo_recall, hippo_remember, hippo_outcome, hippo_status, hippo_context).
+- `hippo hook install pi` patches AGENTS.md with hippo instructions.
+- Pi auto-detected during `hippo init` when `.pi/` directory exists.
+
 ## 0.18.0 (2026-04-08)
 
 ### Added
