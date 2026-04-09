@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.19.1 (2026-04-09)
+
+### Fixed
+- **Configured embedding model propagation.** `hippo embed`, hybrid search, and physics search now all respect `embeddings.model` from `config.json` instead of silently falling back to the default model.
+- **Stale embedding index on model change.** Switching `embeddings.model` now forces a full embedding rebuild and physics-state reset so query vectors and cached vectors stay compatible.
+- **Model-specific pipeline caching.** Embedding pipeline instances are now cached per model instead of being reused across different configured models.
+- **Version metadata drift.** Synced package, plugin, MCP server, and dashboard version strings for the 0.19.1 release.
+
 ## 0.19.0 (2026-04-08)
 
 ### Added

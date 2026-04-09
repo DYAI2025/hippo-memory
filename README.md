@@ -58,6 +58,11 @@ hippo recall "data pipeline issues" --budget 2000
 
 ---
 
+### What's new in v0.19.1
+
+- **Configured embedding models now work end to end.** `hippo embed`, hybrid search, and physics search all respect `embeddings.model` from `.hippo/config.json`.
+- **Safe rebuild on model change.** If you switch embedding models, rerun `hippo embed`. Hippo now rebuilds cached embeddings and resets physics state so old vectors are not mixed with the new model.
+
 ### What's new in v0.18
 
 - **Multi-project auto-discovery.** `hippo init --scan [dir]` finds all git repos under a directory and initializes each one. Seeds with a full year of git history by default. One command to set up memory across all your projects.
@@ -126,6 +131,7 @@ hippo recall "data pipeline issues" --budget 2000
 ### What's new in v0.8.0
 
 - **Hybrid search** blends BM25 keywords with cosine embedding similarity. Install `@xenova/transformers`, run `hippo embed`, recall quality jumps. Falls back to BM25 otherwise.
+- Configure a custom embedding model with `embeddings.model` in `.hippo/config.json`. If you change models later, rerun `hippo embed` so Hippo rebuilds cached embeddings and physics state for the new vector space.
 - **Schema acceleration** auto-computes how well new memories fit existing patterns. Familiar memories consolidate faster; novel ones decay faster if unused.
 - **Multi-agent shared memory** with `hippo share`, `hippo peers`, and transfer scoring. Universal lessons travel between projects; project-specific config stays local.
 - **Conflict resolution** via `hippo resolve <id> --keep <mem_id>`. Closes the detect-inspect-resolve loop.
