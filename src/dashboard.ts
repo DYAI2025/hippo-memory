@@ -196,7 +196,7 @@ function dashboardHTML(data: DashboardData): string {
 </style>
 </head>
 <body>
-<h1>Hippo Dashboard <span>v0.8.0</span></h1>
+<h1>Hippo Dashboard <span>v0.19.1</span></h1>
 <p style="color: var(--muted); margin-bottom: 24px;">Memory health at a glance. Auto-refreshes on page load.</p>
 
 <div class="section">
