@@ -69,7 +69,7 @@ import {
   SessionEvent,
 } from './store.js';
 import type { SessionHandoff } from './handoff.js';
-import { search, markRetrieved, estimateTokens, hybridSearch, physicsSearch, explainMatch } from './search.js';
+import { search, markRetrieved, estimateTokens, hybridSearch, physicsSearch, explainMatch, textOverlap } from './search.js';
 import { consolidate } from './consolidate.js';
 import {
   isEmbeddingAvailable,
@@ -300,6 +300,12 @@ function cmdInit(hippoRoot: string, flags: Record<string, string | boolean | str
       } else {
         console.log(`   No matching commits found in git history.`);
       }
+    }
+
+    // Also import from Claude Code / agent MEMORY.md files
+    const memImported = learnFromMemoryMd(hippoRoot);
+    if (memImported > 0) {
+      console.log(`   Imported ${memImported} memories from agent MEMORY.md files.`);
     }
   }
 }
@@ -606,6 +612,189 @@ async function cmdRecall(
   }
 }
 
+/**
+ * Scan for Claude Code MEMORY.md files and import new entries into hippo.
+ * Looks in ~/.claude/projects/<project>/memory/ for .md files with YAML frontmatter.
+ */
+function learnFromMemoryMd(hippoRoot: string): number {
+  const home = os.homedir();
+  const memoryDirs: string[] = [];
+
+  // Claude Code project memories
+  const claudeProjectsDir = path.join(home, '.claude', 'projects');
+  if (fs.existsSync(claudeProjectsDir)) {
+    try {
+      for (const project of fs.readdirSync(claudeProjectsDir)) {
+        const memDir = path.join(claudeProjectsDir, project, 'memory');
+        if (fs.existsSync(memDir)) memoryDirs.push(memDir);
+      }
+    } catch { /* permission denied */ }
+  }
+
+  if (memoryDirs.length === 0) return 0;
+
+  const existing = loadAllEntries(hippoRoot);
+  let imported = 0;
+
+  for (const memDir of memoryDirs) {
+    try {
+      const files = fs.readdirSync(memDir).filter(f => f.endsWith('.md') && f !== 'MEMORY.md');
+      for (const file of files) {
+        const raw = fs.readFileSync(path.join(memDir, file), 'utf8');
+
+        // Parse YAML frontmatter
+        const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+        if (!fmMatch) continue;
+
+        const body = fmMatch[2].trim();
+        if (!body || body.length < 10) continue;
+
+        // Truncate to reasonable size
+        const content = body.length > 1500 ? body.slice(0, 1500) + ' [truncated]' : body;
+
+        // Dedup: check if substantially similar content already exists
+        const isDup = existing.some(e => {
+          const overlap = textOverlap(content.slice(0, 200), e.content.slice(0, 200));
+          return overlap > 0.6;
+        });
+        if (isDup) continue;
+
+        const entry = createMemory(content, {
+          layer: Layer.Episodic,
+          tags: ['claude-code-memory'],
+          source: `claude-memory:${file}`,
+          confidence: 'observed',
+        });
+
+        writeEntry(hippoRoot, entry);
+        existing.push(entry); // prevent self-dedup within batch
+        imported++;
+      }
+    } catch { /* skip broken dirs */ }
+  }
+
+  return imported;
+}
+
+/**
+ * Scan the store for near-duplicate memories and remove the weaker copy.
+ * Two memories are duplicates if their content has > threshold Jaccard overlap.
+ * Keeps the one with higher strength (or more retrievals if tied).
+ */
+interface DedupPair {
+  kept: string;
+  keptContent: string;
+  keptLayer: string;
+  keptStrength: number;
+  removed: string;
+  removedContent: string;
+  removedLayer: string;
+  removedStrength: number;
+  similarity: number;
+}
+
+function deduplicateStore(
+  hippoRoot: string,
+  options: { threshold?: number; dryRun?: boolean } = {}
+): { removed: number; pairs: DedupPair[] } {
+  const threshold = options.threshold ?? 0.7;
+  const dryRun = options.dryRun ?? false;
+  const entries = loadAllEntries(hippoRoot);
+
+  // Sort by strength desc, then retrieval count, so we keep the most valuable copy
+  entries.sort((a, b) => {
+    const sDiff = (b.strength ?? 0) - (a.strength ?? 0);
+    if (Math.abs(sDiff) > 0.01) return sDiff;
+    return (b.retrieval_count ?? 0) - (a.retrieval_count ?? 0);
+  });
+
+  const removed = new Set<string>();
+  const pairs: DedupPair[] = [];
+
+  for (let i = 0; i < entries.length; i++) {
+    if (removed.has(entries[i].id)) continue;
+    for (let j = i + 1; j < entries.length; j++) {
+      if (removed.has(entries[j].id)) continue;
+
+      const similarity = textOverlap(entries[i].content, entries[j].content);
+      if (similarity <= threshold) continue;
+
+      removed.add(entries[j].id);
+      pairs.push({
+        kept: entries[i].id,
+        keptContent: entries[i].content,
+        keptLayer: entries[i].layer,
+        keptStrength: entries[i].strength ?? 0,
+        removed: entries[j].id,
+        removedContent: entries[j].content,
+        removedLayer: entries[j].layer,
+        removedStrength: entries[j].strength ?? 0,
+        similarity,
+      });
+    }
+  }
+
+  if (!dryRun) {
+    for (const id of removed) {
+      deleteEntry(hippoRoot, id);
+    }
+  }
+
+  return { removed: removed.size, pairs };
+}
+
+function cmdDedup(
+  hippoRoot: string,
+  flags: Record<string, string | boolean | string[]>
+): void {
+  requireInit(hippoRoot);
+
+  const dryRun = Boolean(flags['dry-run']);
+  const threshold = parseFloat(String(flags['threshold'] ?? '0.7'));
+
+  const entries = loadAllEntries(hippoRoot);
+  console.log(`Scanning ${entries.length} memories for duplicates (>=${(threshold * 100).toFixed(0)}% text overlap)${dryRun ? ' (dry run)' : ''}...\n`);
+
+  const result = deduplicateStore(hippoRoot, { threshold, dryRun });
+
+  if (result.removed === 0) {
+    console.log('No duplicates found.');
+    return;
+  }
+
+  // Group by reason
+  const sameLayerSem = result.pairs.filter(p => p.keptLayer === 'semantic' && p.removedLayer === 'semantic');
+  const sameLayerEpi = result.pairs.filter(p => p.keptLayer === 'episodic' && p.removedLayer === 'episodic');
+  const crossLayer = result.pairs.filter(p => p.keptLayer !== p.removedLayer);
+
+  console.log(`${dryRun ? 'Would remove' : 'Removed'} ${result.removed} duplicates:`);
+  if (sameLayerSem.length > 0) {
+    console.log(`  ${sameLayerSem.length} redundant semantic memories (consolidation regenerated near-identical patterns)`);
+  }
+  if (sameLayerEpi.length > 0) {
+    console.log(`  ${sameLayerEpi.length} duplicate episodic memories (same lesson learned from multiple sources)`);
+  }
+  if (crossLayer.length > 0) {
+    console.log(`  ${crossLayer.length} cross-layer duplicates (episodic content already consolidated into semantic)`);
+  }
+
+  // Show detailed pairs
+  console.log('');
+  const shown = result.pairs.slice(0, 15);
+  for (const pair of shown) {
+    const simPct = (pair.similarity * 100).toFixed(0);
+    const action = dryRun ? 'Would remove' : 'Removed';
+    console.log(`  ${simPct}% similar | kept [${pair.keptLayer}] strength=${pair.keptStrength.toFixed(2)}`);
+    console.log(`    ${pair.keptContent.slice(0, 90)}`);
+    console.log(`  ${action} [${pair.removedLayer}] strength=${pair.removedStrength.toFixed(2)}`);
+    console.log(`    ${pair.removedContent.slice(0, 90)}`);
+    console.log('');
+  }
+  if (result.pairs.length > 15) {
+    console.log(`  ... and ${result.pairs.length - 15} more (run with --dry-run to see all)`);
+  }
+}
+
 function cmdSleep(
   hippoRoot: string,
   flags: Record<string, string | boolean | string[]>
@@ -619,6 +808,10 @@ function cmdSleep(
       const { added } = learnFromRepo(hippoRoot, process.cwd(), 1);
       if (added > 0) console.log(`Auto-learned ${added} lessons from today's git commits.`);
     }
+
+    // Also learn from Claude Code MEMORY.md files
+    const memImported = learnFromMemoryMd(hippoRoot);
+    if (memImported > 0) console.log(`Imported ${memImported} memories from Claude Code MEMORY.md files.`);
   }
 
   const dryRun = Boolean(flags['dry-run']);
@@ -640,6 +833,21 @@ function cmdSleep(
   }
 
   if (dryRun) console.log('\n(dry run  - nothing written)');
+
+  // Auto-dedup after consolidation (unless dry-run)
+  if (!dryRun) {
+    const dedupResult = deduplicateStore(hippoRoot);
+    if (dedupResult.removed > 0) {
+      const semDups = dedupResult.pairs.filter(p => p.keptLayer === 'semantic' && p.removedLayer === 'semantic').length;
+      const epiDups = dedupResult.pairs.filter(p => p.keptLayer === 'episodic' && p.removedLayer === 'episodic').length;
+      const crossDups = dedupResult.pairs.filter(p => p.keptLayer !== p.removedLayer).length;
+      const parts: string[] = [];
+      if (semDups > 0) parts.push(`${semDups} redundant semantic patterns`);
+      if (epiDups > 0) parts.push(`${epiDups} duplicate episodic lessons`);
+      if (crossDups > 0) parts.push(`${crossDups} cross-layer duplicates`);
+      console.log(`\nDeduped ${dedupResult.removed} duplicates (${parts.join(', ')}). Kept stronger copies.`);
+    }
+  }
 
   // Auto-share high-transfer-score memories to global (unless --no-share or dry-run)
   if (!dryRun && !flags['no-share']) {
@@ -2411,10 +2619,13 @@ Commands:
     --budget <n>           Token budget (default: 1500)
     --format <fmt>         Output format: markdown (default) or json
     --framing <mode>       Framing: observe (default), suggest, assert
-  sleep                    Run consolidation pass (auto-learns + auto-shares)
+  sleep                    Run consolidation pass (auto-learns + dedup + auto-shares)
     --dry-run              Preview without writing
     --no-learn             Skip auto git-learn before consolidation
     --no-share             Skip auto-sharing to global store
+  dedup                    Remove duplicate memories (keeps stronger copy)
+    --dry-run              Preview without removing
+    --threshold <n>        Overlap threshold 0-1 (default: 0.7)
   status                   Show memory health stats
   outcome                  Apply feedback to last recall
     --good                 Memories were helpful
@@ -2596,6 +2807,10 @@ async function main(): Promise<void> {
 
     case 'sleep':
       cmdSleep(hippoRoot, flags);
+      break;
+
+    case 'dedup':
+      cmdDedup(hippoRoot, flags);
       break;
 
     case 'status':
