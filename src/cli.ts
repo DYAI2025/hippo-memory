@@ -2485,7 +2485,7 @@ function installClaudeCodeSessionEndHook(): { installed: boolean; migratedFromSt
       hooks: [
         {
           type: 'command',
-          command: 'hippo sleep 2>/dev/null || true',
+          command: "echo '[hippo] consolidating memory...' && (hippo sleep && echo '[hippo] sleep complete' || echo '[hippo] sleep failed')",
           timeout: 30,
         },
       ],

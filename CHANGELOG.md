@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.20.3 (2026-04-12)
+
+### Changed
+- **Visible confirmation on `SessionEnd` hook.** The `hippo sleep` hook installed by `hippo hook install claude-code` (and the Claude Code plugin) now echoes `[hippo] consolidating memory...` before the run and `[hippo] sleep complete` / `[hippo] sleep failed` after, so users can see that consolidation actually ran on session exit. Previous versions swallowed all output with `2>/dev/null || true`. Existing installs need a reinstall (`hippo hook uninstall claude-code && hippo hook install claude-code`) to pick up the new command — the installer's idempotency check treats any entry containing `hippo sleep` as already installed.
+
 ## 0.20.2 (2026-04-12)
 
 ### Fixed

@@ -60,6 +60,10 @@ hippo recall "data pipeline issues" --budget 2000
 
 ---
 
+### What's new in v0.20.3
+
+- **Visible confirmation on session-end sleep.** The installed `SessionEnd` hook now echoes `[hippo] consolidating memory...` before running and `[hippo] sleep complete` / `[hippo] sleep failed` after, so you can see consolidation actually ran. Existing installs need a reinstall (`hippo hook uninstall claude-code && hippo hook install claude-code`) to pick up the new command.
+
 ### What's new in v0.20.2
 
 - **Claude Code hook uses `SessionEnd`, not `Stop`.** Earlier versions ran `hippo sleep` after every assistant turn; now it runs once at session exit. Re-running `hippo hook install claude-code` migrates existing `Stop` entries automatically.
