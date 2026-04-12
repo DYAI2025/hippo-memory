@@ -60,6 +60,17 @@ hippo recall "data pipeline issues" --budget 2000
 
 ---
 
+### What's new in v0.21.0
+
+- **`hippo setup` — one command, every tool.** Detects Claude Code, OpenCode, OpenClaw, Codex, Cursor, and Pi on your machine and installs all available SessionEnd + SessionStart hooks in one pass. Idempotent — safe to re-run.
+- **OpenCode hooks.** SessionEnd + SessionStart install into `~/.config/opencode/opencode.json` (OpenCode added Claude-Code-compatible hooks in Jan 2026).
+- **You actually see consolidation output now.** New `SessionStart` hook prints the previous session's `hippo sleep` output between banners on the next startup. Previously, SessionEnd output was invisible because the TUI was tearing down when it ran.
+
+```bash
+npm install -g hippo-memory
+hippo setup                # or: hippo hook install claude-code
+```
+
 ### What's new in v0.20.3
 
 - **Visible confirmation on session-end sleep.** The installed `SessionEnd` hook now echoes `[hippo] consolidating memory...` before running and `[hippo] sleep complete` / `[hippo] sleep failed` after, so you can see consolidation actually ran. Existing installs need a reinstall (`hippo hook uninstall claude-code && hippo hook install claude-code`) to pick up the new command.

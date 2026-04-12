@@ -1,20 +1,23 @@
 # Hippo + OpenCode Integration
 
-Three integration methods, from easiest to most powerful.
+Four integration methods, from easiest to most powerful.
 
 ---
 
 ## 1. Auto-install (recommended)
 
-If your project uses OpenCode, just run:
-
 ```bash
-hippo init
+hippo setup
 ```
 
-Hippo auto-detects OpenCode (looks for `.opencode/` or `opencode.json`) and patches `AGENTS.md` with memory instructions.
+Detects OpenCode at `~/.config/opencode/` and installs two hooks in `opencode.json`:
 
-To install manually: `hippo hook install opencode`
+- `SessionEnd` runs `hippo sleep --log-file ~/.hippo/logs/opencode-sleep.log` when a session ends (consolidate + dedup + auto-share).
+- `SessionStart` runs `hippo last-sleep` at the next startup — prints the previous consolidation between banners and clears the log.
+
+OpenCode added Claude-Code-compatible session hooks in Jan 2026, so the schema matches exactly.
+
+To install manually: `hippo hook install opencode`. To also patch `AGENTS.md` in a project, run `hippo init` inside the project.
 
 ---
 

@@ -57,9 +57,11 @@ This tightens the feedback loop. Good memories strengthen; irrelevant ones decay
 
 ### Periodic maintenance
 
-Consolidation runs automatically when Claude Code exits (via a `SessionEnd` hook in `~/.claude/settings.json`). This is installed by `hippo init` or `hippo hook install claude-code`.
+Consolidation runs automatically when Claude Code exits (via a `SessionEnd` hook in `~/.claude/settings.json`). This is installed by `hippo init`, `hippo setup`, or `hippo hook install claude-code`.
 
-> Earlier versions (< 0.20.2) used a `Stop` hook, which fires after every assistant turn — that caused `hippo sleep` to run on every reply. Re-running `hippo hook install claude-code` migrates the old entry automatically.
+Since Claude Code tears down the TUI before `SessionEnd` stdout can render, the hook writes the consolidation output to `~/.hippo/logs/claude-code-sleep.log` instead. A companion `SessionStart` hook (also installed automatically) prints that log on your next session start between `=== Previous session hippo consolidation ===` banners and clears it. So you actually see what was consolidated.
+
+> Earlier versions (< 0.20.2) used a `Stop` hook, which fires after every assistant turn — that caused `hippo sleep` to run on every reply. Re-running `hippo hook install claude-code` (or `hippo setup`) migrates the old entry automatically. Same applies to the pre-0.21.0 `SessionEnd` format without `--log-file`.
 
 If you prefer manual control:
 

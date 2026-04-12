@@ -30,6 +30,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { execSync } from 'child_process';
 import {
+  installJsonHooks,
+  uninstallJsonHooks,
+  detectInstalledTools,
+  defaultSleepLogPath,
+  type JsonHookTarget,
+} from './hooks.js';
+import {
   createMemory,
   calculateStrength,
   calculateRewardFactor,
@@ -800,6 +807,57 @@ function cmdSleep(
   hippoRoot: string,
   flags: Record<string, string | boolean | string[]>
 ): void {
+  // Tee stdout/stderr to a log file when --log-file is set. The SessionEnd
+  // hook uses this so the output is captured somewhere the SessionStart hook
+  // can re-display it next time the agent UI starts.
+  const logFile = typeof flags['log-file'] === 'string' ? (flags['log-file'] as string) : null;
+  let restoreStdout: (() => void) | null = null;
+  if (logFile) {
+    try {
+      fs.mkdirSync(path.dirname(logFile), { recursive: true });
+      fs.writeFileSync(logFile, `[hippo] ${new Date().toISOString()} consolidating memory...\n`, 'utf8');
+      const origStdoutWrite = process.stdout.write.bind(process.stdout);
+      const origStderrWrite = process.stderr.write.bind(process.stderr);
+      const tee = (chunk: unknown) => {
+        try {
+          const buf = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+          fs.appendFileSync(logFile, buf, 'utf8');
+        } catch {
+          // log failures are non-fatal — still write to the real stream
+        }
+      };
+      process.stdout.write = ((chunk: any, enc?: any, cb?: any): boolean => {
+        tee(chunk);
+        return origStdoutWrite(chunk, enc, cb);
+      }) as typeof process.stdout.write;
+      process.stderr.write = ((chunk: any, enc?: any, cb?: any): boolean => {
+        tee(chunk);
+        return origStderrWrite(chunk, enc, cb);
+      }) as typeof process.stderr.write;
+      restoreStdout = () => {
+        process.stdout.write = origStdoutWrite;
+        process.stderr.write = origStderrWrite;
+      };
+    } catch (err) {
+      console.error(`[hippo] warning: could not open log file ${logFile}: ${(err as Error).message}`);
+    }
+  }
+
+  try {
+    cmdSleepCore(hippoRoot, flags);
+    if (logFile) console.log('[hippo] sleep complete');
+  } catch (err) {
+    if (logFile) console.log(`[hippo] sleep failed: ${(err as Error).message}`);
+    throw err;
+  } finally {
+    if (restoreStdout) restoreStdout();
+  }
+}
+
+function cmdSleepCore(
+  hippoRoot: string,
+  flags: Record<string, string | boolean | string[]>
+): void {
   requireInit(hippoRoot);
 
   // Auto-learn from git before consolidating (unless --no-learn)
@@ -859,6 +917,38 @@ function cmdSleep(
         console.log(`\nAuto-shared ${shared.length} high-value memories to global store.`);
       }
     }
+  }
+}
+
+/**
+ * Print the contents of the SessionEnd sleep log to stdout, then clear it.
+ * Called from SessionStart hooks so the user sees the previous session's
+ * consolidation output (SessionEnd hook output is invisible because the TUI
+ * is tearing down when it runs).
+ */
+function cmdLastSleep(flags: Record<string, string | boolean | string[]>): void {
+  const logPath = typeof flags['path'] === 'string'
+    ? (flags['path'] as string)
+    : defaultSleepLogPath();
+
+  if (!fs.existsSync(logPath)) return;
+
+  let content: string;
+  try {
+    content = fs.readFileSync(logPath, 'utf8');
+  } catch {
+    return;
+  }
+
+  if (content.trim().length > 0) {
+    console.log('=== Previous session hippo consolidation ===');
+    process.stdout.write(content);
+    if (!content.endsWith('\n')) console.log();
+    console.log('===========================================');
+  }
+
+  if (!flags['keep']) {
+    try { fs.unlinkSync(logPath); } catch { /* non-fatal */ }
   }
 }
 
@@ -2362,14 +2452,21 @@ function cmdHook(
       console.log(`   Create ${hook.file} and re-run \`hippo hook install ${target}\` if you want the agent prompt.`);
     }
 
-    // For claude-code, also install the SessionEnd hook in settings.json
-    if (target === 'claude-code') {
-      const result = installClaudeCodeSessionEndHook();
-      if (result.installed) {
-        console.log(`Installed hippo sleep SessionEnd hook in Claude Code settings.json`);
+    // For tools with JSON hook systems, also install SessionEnd+SessionStart
+    // entries in their settings file. Currently: claude-code + opencode.
+    if (target === 'claude-code' || target === 'opencode') {
+      const result = installJsonHooks(target);
+      if (result.installedSessionEnd) {
+        console.log(`Installed hippo sleep SessionEnd hook in ${result.target} settings`);
+      }
+      if (result.installedSessionStart) {
+        console.log(`Installed hippo last-sleep SessionStart hook in ${result.target} settings`);
       }
       if (result.migratedFromStop) {
         console.log(`Migrated legacy Stop hook → SessionEnd (was running every turn; now fires once on session exit)`);
+      }
+      if (result.migratedLegacySessionEnd) {
+        console.log(`Migrated legacy SessionEnd entry to the new --log-file form`);
       }
     }
 
@@ -2404,10 +2501,10 @@ function cmdHook(
     fs.writeFileSync(filepath, cleaned + '\n', 'utf8');
     console.log(`Removed Hippo hook from ${hook.file}`);
 
-    // For claude-code, also remove the SessionEnd (and any legacy Stop) hook
-    if (target === 'claude-code') {
-      if (uninstallClaudeCodeSessionEndHook()) {
-        console.log(`Removed hippo sleep hook from Claude Code settings.json`);
+    // For JSON-hook tools, also strip their SessionEnd/SessionStart entries.
+    if (target === 'claude-code' || target === 'opencode') {
+      if (uninstallJsonHooks(target)) {
+        console.log(`Removed hippo hooks from ${target} settings`);
       }
     }
 
@@ -2422,117 +2519,83 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// ---------------------------------------------------------------------------
-// Claude Code settings.json SessionEnd hook (hippo sleep on session exit)
-//
-// Note: we use SessionEnd, not Stop. Stop fires at the end of every assistant
-// turn, which causes hippo sleep to run on every reply — expensive and noisy.
-// SessionEnd fires once when the session terminates, which is what we want.
-// ---------------------------------------------------------------------------
+// `hippo setup` -- one-shot configuration for every AI coding tool on the box.
+// Detection and install logic live in ./hooks.ts.
 
-const HIPPO_HOOK_MARKER = 'hippo sleep';
+function cmdSetup(flags: Record<string, string | boolean | string[]>): void {
+  const dryRun = Boolean(flags['dry-run']);
+  const forceAll = Boolean(flags['all']);
+  const tools = detectInstalledTools();
 
-/**
- * Resolve the Claude Code user-level settings.json path (~/.claude/settings.json).
- * Always targets the global config so the hook runs for all sessions.
- */
-function resolveClaudeSettingsPath(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  return path.join(home, '.claude', 'settings.json');
+  console.log('Hippo setup -- configuring SessionEnd + SessionStart hooks');
+  console.log('');
+
+  const jsonTools = tools.filter((t) => t.kind === 'json-hook' && (t.detected || forceAll));
+  const skipped = tools.filter((t) => t.kind === 'json-hook' && !t.detected && !forceAll);
+  const markdownTools = tools.filter((t) => t.kind === 'markdown-instruction' && t.detected);
+  const pluginTools = tools.filter((t) => t.kind === 'plugin' && t.detected);
+
+  if (jsonTools.length === 0 && !forceAll) {
+    console.log('No JSON-hook-capable tools detected (checked: claude-code, opencode).');
+    console.log('Run with --all to install hooks anyway.');
+  }
+
+  for (const tool of jsonTools) {
+    if (dryRun) {
+      console.log(`[dry-run] would install hooks in ${tool.configDir}/settings.json`);
+      continue;
+    }
+    const result = installJsonHooks(tool.name as JsonHookTarget);
+    const bits: string[] = [];
+    if (result.installedSessionEnd) bits.push('SessionEnd');
+    if (result.installedSessionStart) bits.push('SessionStart');
+    if (result.migratedFromStop) bits.push('migrated legacy Stop');
+    if (result.migratedLegacySessionEnd) bits.push('migrated legacy SessionEnd');
+    if (bits.length === 0) {
+      console.log(`  ${tool.name.padEnd(14)} already configured (${result.settingsPath})`);
+    } else {
+      console.log(`  ${tool.name.padEnd(14)} ${bits.join(', ')} -> ${result.settingsPath}`);
+    }
+  }
+
+  for (const tool of skipped) {
+    console.log(`  ${tool.name.padEnd(14)} not detected at ${tool.configDir} -- skipping`);
+  }
+
+  if (pluginTools.length > 0) {
+    console.log('');
+    console.log('Plugin-based tools (hook API via plugin, not JSON):');
+    for (const tool of pluginTools) {
+      console.log(`  ${tool.name.padEnd(14)} ${tool.notes}`);
+    }
+  }
+
+  if (markdownTools.length > 0) {
+    console.log('');
+    console.log('Markdown-only tools (no hook API — run `hippo hook install <name>` inside a project):');
+    for (const tool of markdownTools) {
+      console.log(`  ${tool.name.padEnd(14)} ${tool.notes}`);
+    }
+  }
+
+  console.log('');
+  console.log('Done. Restart your AI tool to activate the hooks.');
 }
 
-function hasHippoMarkerIn(hookArray: unknown): boolean {
-  if (!Array.isArray(hookArray)) return false;
-  return JSON.stringify(hookArray).includes(HIPPO_HOOK_MARKER);
-}
+// JSON-hook install/uninstall lives in ./hooks.ts so tests can import it
+// without running the CLI main(). Backwards-compatible wrappers below keep
+// older call sites working.
 
-/**
- * Install a Claude Code SessionEnd hook that runs `hippo sleep` on session exit.
- * Also migrates any legacy Stop-hook entry that earlier versions installed.
- */
 function installClaudeCodeSessionEndHook(): { installed: boolean; migratedFromStop: boolean } {
-  const settingsPath = resolveClaudeSettingsPath();
-  const dir = path.dirname(settingsPath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-  let settings: Record<string, unknown> = {};
-  if (fs.existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    } catch {
-      console.error(`   Warning: could not parse ${settingsPath}, skipping SessionEnd hook install`);
-      return { installed: false, migratedFromStop: false };
-    }
-  }
-
-  if (!settings.hooks) settings.hooks = {};
-  const hooks = settings.hooks as Record<string, unknown[]>;
-
-  // Migration: strip any legacy Stop-hook entry that runs `hippo sleep`
-  let migratedFromStop = false;
-  if (Array.isArray(hooks.Stop) && hasHippoMarkerIn(hooks.Stop)) {
-    hooks.Stop = hooks.Stop.filter((entry) => !JSON.stringify(entry).includes(HIPPO_HOOK_MARKER));
-    if (hooks.Stop.length === 0) delete hooks.Stop;
-    migratedFromStop = true;
-  }
-
-  const alreadyInstalled = hasHippoMarkerIn(hooks.SessionEnd);
-  let installed = false;
-
-  if (!alreadyInstalled) {
-    if (!Array.isArray(hooks.SessionEnd)) hooks.SessionEnd = [];
-    hooks.SessionEnd.push({
-      hooks: [
-        {
-          type: 'command',
-          command: "echo '[hippo] consolidating memory...' && (hippo sleep && echo '[hippo] sleep complete' || echo '[hippo] sleep failed')",
-          timeout: 30,
-        },
-      ],
-    });
-    installed = true;
-  }
-
-  if (installed || migratedFromStop) {
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-  }
-  return { installed, migratedFromStop };
+  const result = installJsonHooks('claude-code');
+  return {
+    installed: result.installedSessionEnd || result.installedSessionStart,
+    migratedFromStop: result.migratedFromStop,
+  };
 }
 
-/**
- * Remove any `hippo sleep` hook from Claude Code settings.json — both the
- * current SessionEnd entry and any legacy Stop entry from older versions.
- */
 function uninstallClaudeCodeSessionEndHook(): boolean {
-  const settingsPath = resolveClaudeSettingsPath();
-  if (!fs.existsSync(settingsPath)) return false;
-
-  let settings: Record<string, unknown>;
-  try {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-  } catch {
-    return false;
-  }
-
-  const hooks = settings.hooks as Record<string, unknown[]> | undefined;
-  if (!hooks) return false;
-
-  let changed = false;
-  for (const key of ['SessionEnd', 'Stop'] as const) {
-    if (Array.isArray(hooks[key]) && hasHippoMarkerIn(hooks[key])) {
-      hooks[key] = hooks[key].filter(
-        (entry) => !JSON.stringify(entry).includes(HIPPO_HOOK_MARKER),
-      );
-      if (hooks[key].length === 0) delete hooks[key];
-      changed = true;
-    }
-  }
-
-  if (!changed) return false;
-
-  if (Object.keys(hooks).length === 0) delete settings.hooks;
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-  return true;
+  return uninstallJsonHooks('claude-code');
 }
 
 // ---------------------------------------------------------------------------
@@ -2748,10 +2811,17 @@ Commands:
     --last-session         (placeholder) Read from agent session logs
     --dry-run              Preview without writing
     --global               Write to global store ($HIPPO_HOME or ~/.hippo/)
+  setup                    One-shot: detect installed AI tools and install all
+                           available SessionEnd+SessionStart hooks
+    --all                  Install for every JSON-hook tool, even if not detected
+    --dry-run              Show what would be installed without writing
+  last-sleep               Print the last 'hippo sleep --log-file' output and clear it
+    --path <p>             Log path (default: ~/.hippo/logs/last-sleep.log)
+    --keep                 Print without clearing
   hook <sub> [target]      Manage framework integrations
     hook list              Show available hooks
     hook install <target>  Install hook (claude-code|codex|cursor|openclaw|opencode|pi)
-                           claude-code also installs SessionEnd hook (hippo sleep on exit)
+                           claude-code also installs SessionEnd+SessionStart in settings.json
     hook uninstall <target> Remove hook
   decide "<decision>"      Record an architectural decision (90-day half-life)
     --context "<why>"      Why this decision was made
@@ -2796,6 +2866,7 @@ Examples:
   hippo learn --git --days 30
   hippo promote mem_abc123
   hippo sync
+  hippo setup
   hippo hook install claude-code
   hippo decide "Use PostgreSQL for new services" --context "JSONB support"
   hippo invalidate "REST API" --reason "migrated to GraphQL"
@@ -2842,6 +2913,10 @@ async function main(): Promise<void> {
 
     case 'sleep':
       cmdSleep(hippoRoot, flags);
+      break;
+
+    case 'last-sleep':
+      cmdLastSleep(flags);
       break;
 
     case 'dedup':
@@ -2906,6 +2981,10 @@ async function main(): Promise<void> {
 
     case 'hook':
       cmdHook(args, flags);
+      break;
+
+    case 'setup':
+      cmdSetup(flags);
       break;
 
     case 'embed':

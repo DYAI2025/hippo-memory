@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.21.0 (2026-04-12)
+
+### Added
+- **`hippo setup` command.** One-shot configuration across every AI coding tool on the box. Detects installed tools by checking for their config directories (`~/.claude`, `~/.config/opencode`, `~/.openclaw`, `~/.codex`, `~/.cursor`, `~/.pi`) and installs all available SessionEnd + SessionStart hooks in one pass. Idempotent. Supports `--all` (install even if not detected) and `--dry-run`.
+- **OpenCode JSON hooks.** OpenCode added Claude-Code-compatible `SessionStart`/`SessionEnd` hooks in Jan 2026, so `hippo setup` and `hippo hook install opencode` now install them into `~/.config/opencode/opencode.json`. Same per-tool log isolation as Claude Code.
+- **`hippo last-sleep` command.** Prints the contents of the last `hippo sleep --log-file` output and clears it. Used by the new `SessionStart` hook so users actually see what was consolidated last time (previously, `SessionEnd` stdout was swallowed by the TUI tearing down).
+- **`hippo sleep --log-file <path>`.** Tees stdout/stderr to a log file while still printing to the terminal. Cross-platform (no shell redirection needed).
+
+### Changed
+- **Claude Code hook now uses `hippo sleep --log-file` + `hippo last-sleep` pair.** Replaces the old `echo ... && hippo sleep` command that produced invisible output. On next session start, the previous consolidation is printed between banners and the log is cleared. Re-running `hippo hook install claude-code` or `hippo setup` migrates existing installs automatically.
+- **Per-tool log paths.** Each tool writes to its own log file in `~/.hippo/logs/` (`claude-code-sleep.log`, `opencode-sleep.log`). Prevents Claude Code's SessionEnd from clobbering OpenCode's, and vice versa.
+
+### Internal
+- Hook install/uninstall moved from `src/cli.ts` to a dedicated `src/hooks.ts` so tests and third-party callers can use it without running the CLI main().
+- New `tests/hooks.test.ts` covers fresh install, idempotency, legacy Stop migration, legacy SessionEnd migration, per-tool log isolation, and uninstall.
+
 ## 0.20.3 (2026-04-12)
 
 ### Changed
