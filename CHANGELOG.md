@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.20.1 (2026-04-12)
+
+### Changed
+- **Session-end capture in all hook templates.** All agent hooks (claude-code, codex, openclaw, opencode, pi) now instruct the agent to summarize the session (decisions, errors, lessons) into `hippo capture` before exiting. Zero friction — the agent does it automatically as its last action.
+
 ## 0.20.0 (2026-04-12)
 
 ### Added
