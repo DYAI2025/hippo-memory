@@ -5,9 +5,11 @@
  * SessionStart/SessionEnd schema. Hippo installs three entries:
  *   - SessionEnd: `hippo sleep --log-file <path>` - captures consolidation
  *     output to a log file because the TUI is tearing down at that point.
- *   - SessionEnd: `hippo capture --last-session` - extracts actionable
- *     memories from the session transcript (one capture per session, not per
- *     turn). The SessionEnd payload stdin carries `transcript_path`, which
+ *   - SessionEnd: `hippo capture --last-session --log-file <path>` - extracts
+ *     actionable memories from the session transcript (one capture per
+ *     session, not per turn) and tees its output to the same log file as
+ *     sleep so `hippo last-sleep` surfaces both on the next session start.
+ *     The SessionEnd payload stdin carries `transcript_path`, which
  *     `hippo capture` resolves automatically.
  *   - SessionStart: `hippo last-sleep --path <path>` - prints that log on
  *     the next startup and clears it, so the user actually sees it.
@@ -50,6 +52,7 @@ const HIPPO_SLEEP_MARKER = 'hippo sleep';
 const HIPPO_LAST_SLEEP_MARKER = 'hippo last-sleep';
 const HIPPO_CAPTURE_MARKER = 'hippo capture --last-session';
 const CURRENT_SESSIONEND_MARKER = 'hippo sleep --log-file';
+const CURRENT_CAPTURE_MARKER = 'hippo capture --last-session --log-file';
 
 function homeDir(): string {
   return process.env.HOME || process.env.USERPROFILE || os.homedir();
@@ -89,6 +92,10 @@ function hookArrayContains(hookArray: unknown, marker: string): boolean {
 
 function hasCurrentFormatSessionEnd(hookArray: unknown): boolean {
   return hookArrayContains(hookArray, CURRENT_SESSIONEND_MARKER);
+}
+
+function hasCurrentFormatCapture(hookArray: unknown): boolean {
+  return hookArrayContains(hookArray, CURRENT_CAPTURE_MARKER);
 }
 
 export function installJsonHooks(target: JsonHookTarget): InstallResult {
@@ -166,14 +173,29 @@ export function installJsonHooks(target: JsonHookTarget): InstallResult {
     installedSessionStart = true;
   }
 
+  // Migrate legacy capture entries from 0.22.0 (which installed
+  // `hippo capture --last-session` without --log-file, so its output was
+  // swallowed by the TUI teardown). 0.22.1+ writes to the same log file as
+  // `hippo sleep` so `hippo last-sleep` surfaces both on the next startup.
+  if (
+    Array.isArray(hooks.SessionEnd) &&
+    hookArrayContains(hooks.SessionEnd, HIPPO_CAPTURE_MARKER) &&
+    !hasCurrentFormatCapture(hooks.SessionEnd)
+  ) {
+    hooks.SessionEnd = hooks.SessionEnd.filter(
+      (entry) => !JSON.stringify(entry).includes(HIPPO_CAPTURE_MARKER),
+    );
+    if (hooks.SessionEnd.length === 0) delete hooks.SessionEnd;
+  }
+
   let installedSessionCapture = false;
-  if (!hookArrayContains(hooks.SessionEnd, HIPPO_CAPTURE_MARKER)) {
+  if (!hasCurrentFormatCapture(hooks.SessionEnd)) {
     if (!Array.isArray(hooks.SessionEnd)) hooks.SessionEnd = [];
     hooks.SessionEnd.push({
       hooks: [
         {
           type: 'command',
-          command: 'hippo capture --last-session',
+          command: `hippo capture --last-session --log-file "${logFile}"`,
           timeout: 15,
         },
       ],

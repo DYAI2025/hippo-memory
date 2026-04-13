@@ -2832,6 +2832,7 @@ Commands:
     --file <path>          Read from a file
     --last-session         Read from the most recent agent session transcript
     --transcript <path>    Explicit transcript path (implies --last-session)
+    --log-file <path>      Tee output to a log file (paired with 'hippo last-sleep')
     --dry-run              Preview without writing
     --global               Write to global store ($HIPPO_HOME or ~/.hippo/)
   setup                    One-shot: detect installed AI tools and install all
@@ -3149,7 +3150,7 @@ async function main(): Promise<void> {
       }
 
       if (!captureSource) {
-        console.error('Usage: hippo capture --stdin|--file <path>|--last-session [--transcript <path>] [--dry-run] [--global]');
+        console.error('Usage: hippo capture --stdin|--file <path>|--last-session [--transcript <path>] [--log-file <path>] [--dry-run] [--global]');
         process.exit(1);
       }
 
@@ -3157,6 +3158,7 @@ async function main(): Promise<void> {
         source: captureSource,
         filePath: captureFile,
         transcriptPath,
+        logFile: typeof flags['log-file'] === 'string' ? (flags['log-file'] as string) : undefined,
         dryRun: Boolean(flags['dry-run']),
         global: Boolean(flags['global']),
       });

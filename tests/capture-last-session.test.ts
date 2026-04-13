@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { spawnSync } from 'child_process';
 import { summariseTranscript, resolveLastSessionTranscript } from '../src/capture.js';
 
 /**
@@ -149,5 +150,72 @@ describe('resolveLastSessionTranscript', () => {
 
   it('does not throw on non-JSON stdin text', () => {
     expect(resolveLastSessionTranscript(undefined, 'some plain text')).toBeNull();
+  });
+});
+
+describe('hippo capture --last-session --log-file (end-to-end via CLI)', () => {
+  let tmp: { dir: string; cleanup: () => void };
+
+  beforeEach(() => {
+    tmp = withTmpDir();
+  });
+
+  afterEach(() => {
+    tmp.cleanup();
+  });
+
+  it('tees banner + completion message to the log file and appends (does not truncate)', () => {
+    const transcript = path.join(tmp.dir, 't.jsonl');
+    fs.writeFileSync(
+      transcript,
+      JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: "let's go with PostgreSQL" },
+      }) + '\n',
+    );
+
+    const logFile = path.join(tmp.dir, 'session.log');
+    // Simulate `hippo sleep --log-file` having already written its output —
+    // capture runs second in the SessionEnd sequence and must append.
+    fs.writeFileSync(logFile, '[hippo] sleep complete\n', 'utf8');
+
+    // Init a hippo store in the tmp cwd so capture doesn't bail out
+    // on `No .hippo directory found`.
+    const binPath = path.resolve(process.cwd(), 'bin', 'hippo.js');
+    const init = spawnSync(
+      process.execPath,
+      [binPath, 'init', '--no-hooks', '--no-schedule', '--no-learn'],
+      { cwd: tmp.dir, stdio: 'ignore' },
+    );
+    expect(init.status).toBe(0);
+
+    // Spawn the actual CLI so we exercise the same code path the hook runs.
+    // Use --dry-run so no hippo store writes are needed; we only care that
+    // the tee wrapper captures stdout.
+    const result = spawnSync(
+      process.execPath,
+      [
+        binPath,
+        'capture',
+        '--last-session',
+        '--transcript',
+        transcript,
+        '--log-file',
+        logFile,
+        '--dry-run',
+      ],
+      {
+        cwd: tmp.dir,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf8',
+      },
+    );
+
+    expect(result.status).toBe(0);
+
+    const contents = fs.readFileSync(logFile, 'utf8');
+    expect(contents).toContain('[hippo] sleep complete');   // preserved
+    expect(contents).toContain('capturing session...');      // banner appended
+    expect(contents).toContain('[hippo] capture complete');  // completion marker
   });
 });

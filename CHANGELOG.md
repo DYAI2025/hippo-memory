@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.22.1 (2026-04-13)
+
+### Fixed
+- **Session-end capture output is no longer invisible.** In 0.22.0 the SessionEnd `hippo capture --last-session` hook printed its "Captured N items" output during TUI teardown, so users never saw it. 0.22.1 adds a `--log-file` flag to `hippo capture` that tees stdout/stderr to the same log file as `hippo sleep`, and `hippo init` / `hippo setup` / `hippo hook install <target>` now install the capture entry as `hippo capture --last-session --log-file "<path>"`. `hippo last-sleep` on the next session start prints both sleep *and* capture output between the banners so you can confirm they ran.
+- **Auto-migration from 0.22.0.** Re-running any install path detects legacy `hippo capture --last-session` entries (no `--log-file`) and replaces them with the new form. No manual reinstall needed.
+
+### Added
+- **`--transcript <path>` short-circuits stdin read.** When an explicit transcript path is passed, `hippo capture --last-session` no longer attempts to read stdin — avoids blocking in scripted / test contexts.
+
 ## 0.22.0 (2026-04-13)
 
 ### Added

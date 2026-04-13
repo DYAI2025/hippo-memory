@@ -60,6 +60,10 @@ hippo recall "data pipeline issues" --budget 2000
 
 ---
 
+### What's new in v0.22.1
+
+- **SessionEnd capture output actually shows up.** 0.22.0 installed `hippo capture --last-session` without a log tee, so its output was swallowed by the TUI teardown. 0.22.1 adds `--log-file` to `hippo capture` and the installer now wires capture into the same log file as `hippo sleep` — you see both "sleep complete" and "capture complete" on the next session start via `hippo last-sleep`. Existing installs auto-migrate to the new form on re-run.
+
 ### What's new in v0.22.0
 
 - **`hippo capture --last-session` works.** The placeholder from earlier releases is now implemented. It reads the JSONL transcript of the most recent agent session and extracts actionable memories (decisions, rules, errors, preferences). Resolves the transcript from `--transcript <path>`, stdin JSON payload (the shape SessionEnd hooks pass), or auto-discovery under `~/.claude/projects/`.

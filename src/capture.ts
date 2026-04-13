@@ -227,6 +227,14 @@ export interface CaptureOptions {
    * `~/.claude/projects/`.
    */
   transcriptPath?: string;
+  /**
+   * Tee stdout/stderr to this log file while capture runs. Mirrors the
+   * pattern used by `hippo sleep --log-file` so the SessionEnd hook output
+   * (invisible during TUI teardown) can be surfaced via `hippo last-sleep`
+   * on the next session start. Appends rather than truncates — `hippo sleep`
+   * writes the same file first in the SessionEnd sequence.
+   */
+  logFile?: string;
   dryRun: boolean;
   global: boolean;
 }
@@ -355,6 +363,76 @@ export function cmdCapture(
   hippoRoot: string,
   options: CaptureOptions
 ): void {
+  // Tee stdout/stderr to a log file when --log-file is set. Used by the
+  // SessionEnd hook so output (otherwise swallowed by TUI teardown) surfaces
+  // on the next session start via `hippo last-sleep`. Runs second in the
+  // SessionEnd sequence after `hippo sleep`, so we APPEND rather than
+  // truncate — sleep already wrote its own header + body to this file.
+  const restoreStdio = options.logFile ? beginLogTee(options.logFile) : null;
+  try {
+    cmdCaptureCore(hippoRoot, options);
+    if (options.logFile) console.log('[hippo] capture complete');
+  } catch (err) {
+    if (options.logFile) console.log(`[hippo] capture failed: ${(err as Error).message}`);
+    throw err;
+  } finally {
+    if (restoreStdio) restoreStdio();
+  }
+}
+
+/**
+ * Append-mode tee: writes a banner line then mirrors every stdout/stderr
+ * chunk to `logFile` until the returned restore function is called.
+ * Failures to write the log are non-fatal; the real streams still get
+ * the data.
+ */
+function beginLogTee(logFile: string): () => void {
+  try {
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    fs.appendFileSync(
+      logFile,
+      `[hippo] ${new Date().toISOString()} capturing session...\n`,
+      'utf8'
+    );
+  } catch (err) {
+    console.error(`[hippo] warning: could not open log file ${logFile}: ${(err as Error).message}`);
+    return () => {};
+  }
+
+  const origStdoutWrite = process.stdout.write.bind(process.stdout);
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+  const tee = (chunk: unknown): void => {
+    try {
+      const buf =
+        typeof chunk === 'string'
+          ? chunk
+          : Buffer.isBuffer(chunk)
+            ? chunk.toString('utf8')
+            : String(chunk);
+      fs.appendFileSync(logFile, buf, 'utf8');
+    } catch {
+      // log failures are non-fatal
+    }
+  };
+  process.stdout.write = ((chunk: unknown, enc?: unknown, cb?: unknown): boolean => {
+    tee(chunk);
+    return (origStdoutWrite as (...args: unknown[]) => boolean)(chunk, enc, cb);
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: unknown, enc?: unknown, cb?: unknown): boolean => {
+    tee(chunk);
+    return (origStderrWrite as (...args: unknown[]) => boolean)(chunk, enc, cb);
+  }) as typeof process.stderr.write;
+
+  return () => {
+    process.stdout.write = origStdoutWrite;
+    process.stderr.write = origStderrWrite;
+  };
+}
+
+function cmdCaptureCore(
+  hippoRoot: string,
+  options: CaptureOptions
+): void {
   const useGlobal = options.global;
   const targetRoot = useGlobal ? getGlobalRoot() : hippoRoot;
 
@@ -394,11 +472,12 @@ export function cmdCapture(
     }
     case 'last-session': {
       // Try to read stdin non-blockingly: SessionEnd hooks pass a JSON payload,
-      // but manual invocations have no piped stdin. fs.readFileSync(0) will
-      // block waiting for input when run interactively, so only read from
-      // stdin when it is actually piped.
+      // but manual / test invocations have no piped stdin. fs.readFileSync(0)
+      // will block waiting for input when run interactively, so:
+      //   - skip entirely when caller passed an explicit --transcript path
+      //   - skip when stdin is a TTY (interactive shell)
       let stdinText: string | undefined;
-      if (!process.stdin.isTTY) {
+      if (!options.transcriptPath && !process.stdin.isTTY) {
         try {
           stdinText = fs.readFileSync(0, 'utf8');
         } catch {
