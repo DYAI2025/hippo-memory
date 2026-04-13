@@ -59,9 +59,11 @@ This tightens the feedback loop. Good memories strengthen; irrelevant ones decay
 
 Consolidation runs automatically when Claude Code exits (via a `SessionEnd` hook in `~/.claude/settings.json`). This is installed by `hippo init`, `hippo setup`, or `hippo hook install claude-code`.
 
-Since Claude Code tears down the TUI before `SessionEnd` stdout can render, the hook writes the consolidation output to `~/.hippo/logs/claude-code-sleep.log` instead. A companion `SessionStart` hook (also installed automatically) prints that log on your next session start between `=== Previous session hippo consolidation ===` banners and clears it. So you actually see what was consolidated.
+The hook runs `hippo session-end --log-file <path>`, which spawns a detached child process that runs `hippo sleep` then `hippo capture --last-session` in sequence and writes their output to `~/.hippo/logs/claude-code-sleep.log`. Detaching is the only way to survive the TUI teardown — otherwise Claude Code SIGTERM's the hook before consolidation finishes.
 
-> Earlier versions (< 0.20.2) used a `Stop` hook, which fires after every assistant turn — that caused `hippo sleep` to run on every reply. Re-running `hippo hook install claude-code` (or `hippo setup`) migrates the old entry automatically. Same applies to the pre-0.21.0 `SessionEnd` format without `--log-file`.
+A companion `SessionStart` hook (installed automatically) prints that log on your next session start between `=== Previous session hippo consolidation ===` banners and clears it. So you actually see what was consolidated.
+
+> **Migration from 0.22.x:** earlier releases installed two parallel SessionEnd entries (one for `sleep`, one for `capture`). They ran simultaneously and were both killed by the TUI before completion, so the log rarely had the `[hippo] sleep complete` / `[hippo] capture complete` lines. Re-running `hippo hook install claude-code` (or `hippo setup`) collapses them into the single detached `hippo session-end` entry. Also covers the pre-0.20.2 `Stop` hook that ran `hippo sleep` after every turn.
 
 If you prefer manual control:
 

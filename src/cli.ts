@@ -28,7 +28,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import {
   installJsonHooks,
   uninstallJsonHooks,
@@ -376,19 +376,18 @@ function autoInstallHooks(quiet: boolean): void {
     if (hook === 'claude-code' || hook === 'opencode') {
       const result = installJsonHooks(hook);
       if (result.installedSessionEnd) {
-        console.log(`   Auto-installed hippo sleep SessionEnd hook in ${hook} settings`);
+        console.log(`   Auto-installed hippo session-end SessionEnd hook in ${hook} settings`);
       }
       if (result.installedSessionStart) {
         console.log(`   Auto-installed hippo last-sleep SessionStart hook in ${hook} settings`);
       }
-      if (result.installedSessionCapture) {
-        console.log(`   Auto-installed hippo capture SessionEnd hook in ${hook} settings`);
-      }
       if (result.migratedFromStop) {
         console.log(`   Migrated legacy Stop hook → SessionEnd (no longer runs every turn)`);
       }
-      if (result.migratedLegacySessionEnd) {
-        console.log(`   Migrated legacy SessionEnd entry to the new --log-file form`);
+      if (result.migratedSplitSessionEnd) {
+        console.log(`   Migrated split sleep+capture SessionEnd entries → single detached hippo session-end`);
+      } else if (result.migratedLegacySessionEnd) {
+        console.log(`   Migrated legacy SessionEnd entry to the new detached form`);
       }
     }
   }
@@ -961,6 +960,92 @@ function cmdLastSleep(flags: Record<string, string | boolean | string[]>): void 
 
   if (!flags['keep']) {
     try { fs.unlinkSync(logPath); } catch { /* non-fatal */ }
+  }
+}
+
+/**
+ * SessionEnd entry point. Claude Code / OpenCode fire this on /exit while
+ * tearing down the TUI, which kills any child that is still running when
+ * the parent returns. Running sleep + capture synchronously here means both
+ * get SIGTERM'd mid-consolidation.
+ *
+ * So we do the minimum inline (read stdin for transcript_path), then spawn
+ * a fully detached Node child that runs sleep → capture and exit the parent
+ * immediately. The child writes to the log file and survives TUI teardown;
+ * the next SessionStart reads the log via `hippo last-sleep`.
+ */
+function cmdSessionEnd(
+  hippoRoot: string,
+  flags: Record<string, string | boolean | string[]>
+): void {
+  const logFile = typeof flags['log-file'] === 'string' ? (flags['log-file'] as string) : null;
+
+  // Read stdin synchronously. The SessionEnd hook payload carries
+  // `transcript_path` as JSON; we extract it here and pass it to the worker
+  // via argv so the detached child doesn't need to inherit stdin.
+  let transcriptPath: string | null = null;
+  try {
+    const stdinText = fs.readFileSync(0, 'utf8');
+    if (stdinText && stdinText.trim().startsWith('{')) {
+      const payload = JSON.parse(stdinText) as Record<string, unknown>;
+      if (typeof payload.transcript_path === 'string') {
+        transcriptPath = payload.transcript_path;
+      }
+    }
+  } catch {
+    // No stdin, not JSON, or read failure — capture will fall back to
+    // transcript auto-discovery.
+  }
+
+  const workerArgs: string[] = [process.argv[1], '__session-end-worker'];
+  if (logFile) workerArgs.push('--log-file', logFile);
+  if (transcriptPath) workerArgs.push('--transcript', transcriptPath);
+
+  try {
+    const child = spawn(process.execPath, workerArgs, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+  } catch (err) {
+    // If spawn fails, run inline as a last resort — better late output than
+    // no consolidation at all.
+    cmdSessionEndWorker(hippoRoot, flags);
+    return;
+  }
+}
+
+/**
+ * Detached worker that runs sleep, then capture. Invoked via the internal
+ * `__session-end-worker` subcommand (not user-facing). Failures in one stage
+ * do not block the other.
+ */
+function cmdSessionEndWorker(
+  hippoRoot: string,
+  flags: Record<string, string | boolean | string[]>
+): void {
+  try {
+    cmdSleep(hippoRoot, flags);
+  } catch {
+    // sleep errors are already tee'd to the log file via cmdSleep's
+    // `[hippo] sleep failed: ...` line. Continue to capture regardless.
+  }
+  try {
+    const captureOpts: CaptureOptions = {
+      source: 'last-session',
+      transcriptPath: typeof flags['transcript'] === 'string'
+        ? (flags['transcript'] as string)
+        : undefined,
+      logFile: typeof flags['log-file'] === 'string'
+        ? (flags['log-file'] as string)
+        : undefined,
+      dryRun: false,
+      global: false,
+    };
+    cmdCapture(hippoRoot, captureOpts);
+  } catch {
+    // Same treatment — the failure line is already in the log.
   }
 }
 
@@ -2469,19 +2554,18 @@ function cmdHook(
     if (target === 'claude-code' || target === 'opencode') {
       const result = installJsonHooks(target);
       if (result.installedSessionEnd) {
-        console.log(`Installed hippo sleep SessionEnd hook in ${result.target} settings`);
+        console.log(`Installed hippo session-end SessionEnd hook in ${result.target} settings`);
       }
       if (result.installedSessionStart) {
         console.log(`Installed hippo last-sleep SessionStart hook in ${result.target} settings`);
       }
-      if (result.installedSessionCapture) {
-        console.log(`Installed hippo capture SessionEnd hook in ${result.target} settings`);
-      }
       if (result.migratedFromStop) {
         console.log(`Migrated legacy Stop hook → SessionEnd (was running every turn; now fires once on session exit)`);
       }
-      if (result.migratedLegacySessionEnd) {
-        console.log(`Migrated legacy SessionEnd entry to the new --log-file form`);
+      if (result.migratedSplitSessionEnd) {
+        console.log(`Migrated split sleep+capture SessionEnd entries → single detached hippo session-end`);
+      } else if (result.migratedLegacySessionEnd) {
+        console.log(`Migrated legacy SessionEnd entry to the new detached form`);
       }
     }
 
@@ -2565,11 +2649,11 @@ function cmdSetup(flags: Record<string, string | boolean | string[]>): void {
     }
     const result = installJsonHooks(tool.name as JsonHookTarget);
     const bits: string[] = [];
-    if (result.installedSessionEnd) bits.push('SessionEnd (sleep)');
-    if (result.installedSessionCapture) bits.push('SessionEnd (capture)');
+    if (result.installedSessionEnd) bits.push('SessionEnd (session-end)');
     if (result.installedSessionStart) bits.push('SessionStart');
     if (result.migratedFromStop) bits.push('migrated legacy Stop');
-    if (result.migratedLegacySessionEnd) bits.push('migrated legacy SessionEnd');
+    if (result.migratedSplitSessionEnd) bits.push('migrated split SessionEnd → session-end');
+    else if (result.migratedLegacySessionEnd) bits.push('migrated legacy SessionEnd');
     if (bits.length === 0) {
       console.log(`  ${tool.name.padEnd(14)} already configured (${result.settingsPath})`);
     } else {
@@ -2610,8 +2694,7 @@ function installClaudeCodeSessionEndHook(): { installed: boolean; migratedFromSt
   return {
     installed:
       result.installedSessionEnd ||
-      result.installedSessionStart ||
-      result.installedSessionCapture,
+      result.installedSessionStart,
     migratedFromStop: result.migratedFromStop,
   };
 }
@@ -2941,6 +3024,14 @@ async function main(): Promise<void> {
 
     case 'last-sleep':
       cmdLastSleep(flags);
+      break;
+
+    case 'session-end':
+      cmdSessionEnd(hippoRoot, flags);
+      break;
+
+    case '__session-end-worker':
+      cmdSessionEndWorker(hippoRoot, flags);
       break;
 
     case 'dedup':

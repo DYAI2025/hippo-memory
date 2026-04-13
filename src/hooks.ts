@@ -2,20 +2,22 @@
  * JSON-hook install/uninstall for AI coding tools.
  *
  * Currently supports Claude Code and OpenCode, which share the same
- * SessionStart/SessionEnd schema. Hippo installs three entries:
- *   - SessionEnd: `hippo sleep --log-file <path>` - captures consolidation
- *     output to a log file because the TUI is tearing down at that point.
- *   - SessionEnd: `hippo capture --last-session --log-file <path>` - extracts
- *     actionable memories from the session transcript (one capture per
- *     session, not per turn) and tees its output to the same log file as
- *     sleep so `hippo last-sleep` surfaces both on the next session start.
- *     The SessionEnd payload stdin carries `transcript_path`, which
- *     `hippo capture` resolves automatically.
- *   - SessionStart: `hippo last-sleep --path <path>` - prints that log on
- *     the next startup and clears it, so the user actually sees it.
+ * SessionStart/SessionEnd schema. Hippo installs two entries:
+ *   - SessionEnd: `hippo session-end --log-file <path>` - spawns a detached
+ *     child that runs `hippo sleep` then `hippo capture --last-session`
+ *     in sequence, writing both outputs to the log file. The parent returns
+ *     in <100ms so the TUI teardown can't kill the child before it finishes.
+ *   - SessionStart: `hippo last-sleep --path <path>` - prints the log written
+ *     by the previous session's detached worker and then clears it, so the
+ *     user actually sees what was consolidated.
  *
- * Legacy entries from versions < 0.21.0 (bare `hippo sleep` in SessionEnd, or
- * the old `Stop` entry from < 0.20.2) are detected and migrated automatically.
+ * Earlier forms are detected and migrated automatically:
+ *   - < 0.20.2: `Stop` hook firing `hippo sleep` on every assistant turn.
+ *   - < 0.21.0: bare `hippo sleep` in SessionEnd, no `--log-file`.
+ *   - 0.22.x: separate sleep + capture SessionEnd entries. Ran in parallel
+ *     and were both SIGTERM'd by TUI teardown, so completion lines rarely
+ *     made it to the log. 0.23.0+ collapses them into the single
+ *     `hippo session-end` entry above.
  */
 
 import * as fs from 'fs';
@@ -35,9 +37,9 @@ export interface InstallResult {
   settingsPath: string;
   installedSessionEnd: boolean;
   installedSessionStart: boolean;
-  installedSessionCapture: boolean;
   migratedFromStop: boolean;
   migratedLegacySessionEnd: boolean;
+  migratedSplitSessionEnd: boolean;
 }
 
 export interface ToolDetection {
@@ -51,8 +53,7 @@ export interface ToolDetection {
 const HIPPO_SLEEP_MARKER = 'hippo sleep';
 const HIPPO_LAST_SLEEP_MARKER = 'hippo last-sleep';
 const HIPPO_CAPTURE_MARKER = 'hippo capture --last-session';
-const CURRENT_SESSIONEND_MARKER = 'hippo sleep --log-file';
-const CURRENT_CAPTURE_MARKER = 'hippo capture --last-session --log-file';
+const HIPPO_SESSION_END_MARKER = 'hippo session-end';
 
 function homeDir(): string {
   return process.env.HOME || process.env.USERPROFILE || os.homedir();
@@ -90,12 +91,21 @@ function hookArrayContains(hookArray: unknown, marker: string): boolean {
   return JSON.stringify(hookArray).includes(marker);
 }
 
-function hasCurrentFormatSessionEnd(hookArray: unknown): boolean {
-  return hookArrayContains(hookArray, CURRENT_SESSIONEND_MARKER);
+function hasCurrentSessionEnd(hookArray: unknown): boolean {
+  return hookArrayContains(hookArray, HIPPO_SESSION_END_MARKER);
 }
 
-function hasCurrentFormatCapture(hookArray: unknown): boolean {
-  return hookArrayContains(hookArray, CURRENT_CAPTURE_MARKER);
+/**
+ * Returns true when `hooks.SessionEnd` still contains either of the legacy
+ * v0.22.x split entries (bare `hippo sleep` / `hippo capture --last-session`)
+ * without the current consolidated `hippo session-end` entry.
+ */
+function hasLegacySplitSessionEnd(hookArray: unknown): boolean {
+  if (!Array.isArray(hookArray)) return false;
+  const serialized = JSON.stringify(hookArray);
+  const hasSleep = serialized.includes(HIPPO_SLEEP_MARKER);
+  const hasCapture = serialized.includes(HIPPO_CAPTURE_MARKER);
+  return (hasSleep || hasCapture) && !serialized.includes(HIPPO_SESSION_END_MARKER);
 }
 
 export function installJsonHooks(target: JsonHookTarget): InstallResult {
@@ -113,9 +123,9 @@ export function installJsonHooks(target: JsonHookTarget): InstallResult {
         settingsPath,
         installedSessionEnd: false,
         installedSessionStart: false,
-        installedSessionCapture: false,
         migratedFromStop: false,
         migratedLegacySessionEnd: false,
+        migratedSplitSessionEnd: false,
       };
     }
   }
@@ -130,28 +140,35 @@ export function installJsonHooks(target: JsonHookTarget): InstallResult {
     migratedFromStop = true;
   }
 
+  // Migrate legacy SessionEnd forms:
+  //   - pre-0.21 bare `hippo sleep`
+  //   - 0.21.x+ `hippo sleep --log-file` split across two entries
+  //   - 0.22.x `hippo capture --last-session --log-file` second entry
+  // All of these get collapsed into the single `hippo session-end` entry.
   let migratedLegacySessionEnd = false;
-  if (
-    Array.isArray(hooks.SessionEnd) &&
-    hookArrayContains(hooks.SessionEnd, HIPPO_SLEEP_MARKER) &&
-    !hasCurrentFormatSessionEnd(hooks.SessionEnd)
-  ) {
-    hooks.SessionEnd = hooks.SessionEnd.filter(
-      (entry) => !JSON.stringify(entry).includes(HIPPO_SLEEP_MARKER),
-    );
+  let migratedSplitSessionEnd = false;
+  if (Array.isArray(hooks.SessionEnd) && hasLegacySplitSessionEnd(hooks.SessionEnd)) {
+    const before = hooks.SessionEnd.length;
+    hooks.SessionEnd = hooks.SessionEnd.filter((entry) => {
+      const s = JSON.stringify(entry);
+      return !s.includes(HIPPO_SLEEP_MARKER) && !s.includes(HIPPO_CAPTURE_MARKER);
+    });
     if (hooks.SessionEnd.length === 0) delete hooks.SessionEnd;
-    migratedLegacySessionEnd = true;
+    // If the removed entries used the log-file pattern (0.21.x-0.22.x) we
+    // call it a "split" migration; otherwise it was the older bare form.
+    migratedSplitSessionEnd = true;
+    migratedLegacySessionEnd = before > 1;
   }
 
   let installedSessionEnd = false;
-  if (!hasCurrentFormatSessionEnd(hooks.SessionEnd)) {
+  if (!hasCurrentSessionEnd(hooks.SessionEnd)) {
     if (!Array.isArray(hooks.SessionEnd)) hooks.SessionEnd = [];
     hooks.SessionEnd.push({
       hooks: [
         {
           type: 'command',
-          command: `hippo sleep --log-file "${logFile}"`,
-          timeout: 60,
+          command: `hippo session-end --log-file "${logFile}"`,
+          timeout: 5,
         },
       ],
     });
@@ -173,42 +190,12 @@ export function installJsonHooks(target: JsonHookTarget): InstallResult {
     installedSessionStart = true;
   }
 
-  // Migrate legacy capture entries from 0.22.0 (which installed
-  // `hippo capture --last-session` without --log-file, so its output was
-  // swallowed by the TUI teardown). 0.22.1+ writes to the same log file as
-  // `hippo sleep` so `hippo last-sleep` surfaces both on the next startup.
-  if (
-    Array.isArray(hooks.SessionEnd) &&
-    hookArrayContains(hooks.SessionEnd, HIPPO_CAPTURE_MARKER) &&
-    !hasCurrentFormatCapture(hooks.SessionEnd)
-  ) {
-    hooks.SessionEnd = hooks.SessionEnd.filter(
-      (entry) => !JSON.stringify(entry).includes(HIPPO_CAPTURE_MARKER),
-    );
-    if (hooks.SessionEnd.length === 0) delete hooks.SessionEnd;
-  }
-
-  let installedSessionCapture = false;
-  if (!hasCurrentFormatCapture(hooks.SessionEnd)) {
-    if (!Array.isArray(hooks.SessionEnd)) hooks.SessionEnd = [];
-    hooks.SessionEnd.push({
-      hooks: [
-        {
-          type: 'command',
-          command: `hippo capture --last-session --log-file "${logFile}"`,
-          timeout: 15,
-        },
-      ],
-    });
-    installedSessionCapture = true;
-  }
-
   if (
     installedSessionEnd ||
     installedSessionStart ||
-    installedSessionCapture ||
     migratedFromStop ||
-    migratedLegacySessionEnd
+    migratedLegacySessionEnd ||
+    migratedSplitSessionEnd
   ) {
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
   }
@@ -218,9 +205,9 @@ export function installJsonHooks(target: JsonHookTarget): InstallResult {
     settingsPath,
     installedSessionEnd,
     installedSessionStart,
-    installedSessionCapture,
     migratedFromStop,
     migratedLegacySessionEnd,
+    migratedSplitSessionEnd,
   };
 }
 
@@ -240,7 +227,7 @@ export function uninstallJsonHooks(target: JsonHookTarget): boolean {
 
   let changed = false;
   const markersByKey: Record<string, string[]> = {
-    SessionEnd: [HIPPO_SLEEP_MARKER, HIPPO_CAPTURE_MARKER],
+    SessionEnd: [HIPPO_SESSION_END_MARKER, HIPPO_SLEEP_MARKER, HIPPO_CAPTURE_MARKER],
     SessionStart: [HIPPO_LAST_SLEEP_MARKER],
     Stop: [HIPPO_SLEEP_MARKER],
   };

@@ -60,6 +60,11 @@ hippo recall "data pipeline issues" --budget 2000
 
 ---
 
+### What's new in v0.23.0
+
+- **SessionEnd no longer gets killed by TUI teardown.** Claude Code / OpenCode send SIGTERM to hook children as the TUI shuts down. The old 0.22.x split entries (`hippo sleep` + `hippo capture`) ran in parallel and were both killed before completion, so the log rarely had the completion markers. 0.23.0 installs a single `hippo session-end --log-file <path>` entry that spawns a fully detached Node child (via `spawn({detached:true, stdio:'ignore', windowsHide:true}).unref()`), returns in <100ms, and lets the worker run sleep → capture to completion independently. Cross-platform — Windows, macOS, Linux.
+- **Auto-migration** collapses the old 0.22.x two-entry form into the new single entry on re-run of `hippo setup` / `hippo hook install <target>`.
+
 ### What's new in v0.22.1
 
 - **SessionEnd capture output actually shows up.** 0.22.0 installed `hippo capture --last-session` without a log tee, so its output was swallowed by the TUI teardown. 0.22.1 adds `--log-file` to `hippo capture` and the installer now wires capture into the same log file as `hippo sleep` — you see both "sleep complete" and "capture complete" on the next session start via `hippo last-sleep`. Existing installs auto-migrate to the new form on re-run.

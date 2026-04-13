@@ -44,47 +44,50 @@ describe('JSON hook installer', () => {
   });
 
   describe('installJsonHooks(claude-code)', () => {
-    it('installs SessionEnd (sleep + capture) and SessionStart in a fresh settings.json', () => {
+    it('installs a single session-end SessionEnd and a last-sleep SessionStart in a fresh settings.json', () => {
       const result = installJsonHooks('claude-code');
 
       expect(result.installedSessionEnd).toBe(true);
       expect(result.installedSessionStart).toBe(true);
-      expect(result.installedSessionCapture).toBe(true);
       expect(result.migratedFromStop).toBe(false);
       expect(result.migratedLegacySessionEnd).toBe(false);
+      expect(result.migratedSplitSessionEnd).toBe(false);
 
       const settings = JSON.parse(fs.readFileSync(result.settingsPath, 'utf8'));
-      expect(settings.hooks.SessionEnd).toHaveLength(2);
+      expect(settings.hooks.SessionEnd).toHaveLength(1);
       expect(settings.hooks.SessionStart).toHaveLength(1);
 
-      const sessionEndCmds = settings.hooks.SessionEnd.map(
-        (e: { hooks: { command: string }[] }) => e.hooks[0].command
-      );
-      const sessionStartCmd = settings.hooks.SessionStart[0].hooks[0].command;
-      expect(sessionEndCmds.some((c: string) => c.includes('hippo sleep --log-file'))).toBe(true);
-      expect(
-        sessionEndCmds.some((c: string) => c.includes('hippo capture --last-session --log-file')),
-      ).toBe(true);
+      const sessionEndCmd = settings.hooks.SessionEnd[0].hooks[0].command as string;
+      const sessionStartCmd = settings.hooks.SessionStart[0].hooks[0].command as string;
+      expect(sessionEndCmd).toContain('hippo session-end --log-file');
+      expect(sessionEndCmd).not.toContain('hippo sleep --log-file');
+      expect(sessionEndCmd).not.toContain('hippo capture --last-session --log-file');
       expect(sessionStartCmd).toContain('hippo last-sleep');
     });
 
-    it('is idempotent -- running twice does not duplicate entries', () => {
+    it('uses a short SessionEnd timeout because the detached parent returns immediately', () => {
+      const result = installJsonHooks('claude-code');
+      const settings = JSON.parse(fs.readFileSync(result.settingsPath, 'utf8'));
+      const sessionEnd = settings.hooks.SessionEnd[0].hooks[0];
+      expect(sessionEnd.timeout).toBeLessThanOrEqual(10);
+    });
+
+    it('is idempotent — running twice does not duplicate entries', () => {
       installJsonHooks('claude-code');
       const second = installJsonHooks('claude-code');
 
       expect(second.installedSessionEnd).toBe(false);
       expect(second.installedSessionStart).toBe(false);
-      expect(second.installedSessionCapture).toBe(false);
 
       const settings = JSON.parse(fs.readFileSync(second.settingsPath, 'utf8'));
-      expect(settings.hooks.SessionEnd).toHaveLength(2);
+      expect(settings.hooks.SessionEnd).toHaveLength(1);
       expect(settings.hooks.SessionStart).toHaveLength(1);
     });
 
-    it('migrates a legacy capture entry from 0.22.0 (no --log-file) to the 0.22.1 form', () => {
-      // 0.22.0 installed `hippo capture --last-session` with no log redirection,
-      // so its output was swallowed by the TUI teardown. 0.22.1+ writes to the
-      // sleep log so `hippo last-sleep` surfaces both on next startup.
+    it('migrates 0.22.x split sleep+capture SessionEnd entries into the single session-end entry', () => {
+      // 0.22.x installed `hippo sleep --log-file` and `hippo capture --last-session --log-file`
+      // as two separate SessionEnd entries. They ran in parallel and were
+      // SIGTERM'd by TUI teardown before completion.
       const { settings: settingsPath, logFile } = resolveJsonHookPaths('claude-code');
       fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
       fs.writeFileSync(
@@ -99,7 +102,7 @@ describe('JSON hook installer', () => {
               },
               {
                 hooks: [
-                  { type: 'command', command: 'hippo capture --last-session', timeout: 15 },
+                  { type: 'command', command: `hippo capture --last-session --log-file "${logFile}"`, timeout: 15 },
                 ],
               },
             ],
@@ -110,47 +113,16 @@ describe('JSON hook installer', () => {
 
       const result = installJsonHooks('claude-code');
 
-      expect(result.installedSessionCapture).toBe(true);
+      expect(result.migratedSplitSessionEnd).toBe(true);
+      expect(result.migratedLegacySessionEnd).toBe(true); // it was a multi-entry migration
+      expect(result.installedSessionEnd).toBe(true);
 
       const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      expect(settings.hooks.SessionEnd).toHaveLength(2);
-      const commands = settings.hooks.SessionEnd.map(
-        (e: { hooks: { command: string }[] }) => e.hooks[0].command,
-      );
-      // Only the new form remains — no bare `hippo capture --last-session`.
-      expect(
-        commands.some((c: string) => c.includes('hippo capture --last-session --log-file')),
-      ).toBe(true);
-      expect(commands.filter((c: string) => c.includes('hippo capture')).length).toBe(1);
-    });
-
-    it('adds the capture entry to a settings file that already has only the sleep SessionEnd', () => {
-      // Simulates upgrading from 0.21.x (sleep-only) to 0.22.0 (sleep + capture).
-      const { settings: settingsPath, logFile } = resolveJsonHookPaths('claude-code');
-      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-      fs.writeFileSync(
-        settingsPath,
-        JSON.stringify({
-          hooks: {
-            SessionEnd: [
-              {
-                hooks: [
-                  { type: 'command', command: `hippo sleep --log-file "${logFile}"`, timeout: 60 },
-                ],
-              },
-            ],
-          },
-        }),
-        'utf8',
-      );
-
-      const result = installJsonHooks('claude-code');
-
-      expect(result.installedSessionEnd).toBe(false); // sleep already present
-      expect(result.installedSessionCapture).toBe(true);
-
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      expect(settings.hooks.SessionEnd).toHaveLength(2);
+      expect(settings.hooks.SessionEnd).toHaveLength(1);
+      const cmd = settings.hooks.SessionEnd[0].hooks[0].command as string;
+      expect(cmd).toContain('hippo session-end --log-file');
+      expect(cmd).not.toContain('hippo sleep --log-file');
+      expect(cmd).not.toContain('hippo capture --last-session --log-file');
     });
 
     it('migrates a legacy Stop entry from versions < 0.20.2', () => {
@@ -180,7 +152,7 @@ describe('JSON hook installer', () => {
 
       const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
       expect(settings.hooks.Stop).toBeUndefined();
-      expect(settings.hooks.SessionEnd[0].hooks[0].command).toContain('--log-file');
+      expect(settings.hooks.SessionEnd[0].hooks[0].command).toContain('hippo session-end');
     });
 
     it('migrates a legacy SessionEnd entry without --log-file', () => {
@@ -208,20 +180,14 @@ describe('JSON hook installer', () => {
 
       const result = installJsonHooks('claude-code');
 
-      expect(result.migratedLegacySessionEnd).toBe(true);
+      expect(result.migratedSplitSessionEnd).toBe(true);
       expect(result.installedSessionEnd).toBe(true);
-      expect(result.installedSessionCapture).toBe(true);
 
       const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      expect(settings.hooks.SessionEnd).toHaveLength(2);
-      const commands = settings.hooks.SessionEnd.map(
-        (e: { hooks: { command: string }[] }) => e.hooks[0].command
-      );
-      expect(commands.some((c: string) => c.includes('hippo sleep --log-file'))).toBe(true);
-      expect(
-        commands.some((c: string) => c.includes('hippo capture --last-session --log-file')),
-      ).toBe(true);
-      expect(commands.every((c: string) => !c.includes('echo'))).toBe(true);
+      expect(settings.hooks.SessionEnd).toHaveLength(1);
+      const cmd = settings.hooks.SessionEnd[0].hooks[0].command as string;
+      expect(cmd).toContain('hippo session-end --log-file');
+      expect(cmd).not.toContain('echo');
     });
 
     it('preserves unrelated hooks in other event keys', () => {
@@ -247,7 +213,7 @@ describe('JSON hook installer', () => {
       const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
       expect(settings.hooks.PreToolUse).toHaveLength(1);
       expect(settings.hooks.PreToolUse[0].hooks[0].command).toBe('some-other-guard.js');
-      expect(settings.hooks.SessionEnd).toHaveLength(2); // sleep + capture
+      expect(settings.hooks.SessionEnd).toHaveLength(1);
     });
 
     it('ignores an unparseable settings.json without throwing', () => {
@@ -271,7 +237,7 @@ describe('JSON hook installer', () => {
       expect(result.settingsPath).toMatch(/opencode[/\\]opencode\.json$/);
 
       const settings = JSON.parse(fs.readFileSync(result.settingsPath, 'utf8'));
-      expect(settings.hooks.SessionEnd[0].hooks[0].command).toContain('hippo sleep --log-file');
+      expect(settings.hooks.SessionEnd[0].hooks[0].command).toContain('hippo session-end --log-file');
       expect(settings.hooks.SessionStart[0].hooks[0].command).toContain('hippo last-sleep');
     });
 
@@ -309,6 +275,29 @@ describe('JSON hook installer', () => {
       expect(after.hooks?.SessionEnd).toBeUndefined();
       expect(after.hooks?.SessionStart).toBeUndefined();
       expect(after.hooks?.Stop).toBeUndefined();
+    });
+
+    it('also removes legacy 0.22.x split sleep+capture SessionEnd entries', () => {
+      const { settings: settingsPath, logFile } = resolveJsonHookPaths('claude-code');
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+      fs.writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            SessionEnd: [
+              { hooks: [{ type: 'command', command: `hippo sleep --log-file "${logFile}"`, timeout: 60 }] },
+              { hooks: [{ type: 'command', command: `hippo capture --last-session --log-file "${logFile}"`, timeout: 15 }] },
+            ],
+          },
+        }),
+        'utf8',
+      );
+
+      const removed = uninstallJsonHooks('claude-code');
+      expect(removed).toBe(true);
+
+      const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      expect(after.hooks?.SessionEnd).toBeUndefined();
     });
 
     it('returns false when nothing needs removing', () => {

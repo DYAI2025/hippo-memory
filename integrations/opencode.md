@@ -12,7 +12,7 @@ hippo setup
 
 Detects OpenCode at `~/.config/opencode/` and installs two hooks in `opencode.json`:
 
-- `SessionEnd` runs `hippo sleep --log-file ~/.hippo/logs/opencode-sleep.log` when a session ends (consolidate + dedup + auto-share).
+- `SessionEnd` runs `hippo session-end --log-file ~/.hippo/logs/opencode-sleep.log`. This spawns a detached child that runs `hippo sleep` then `hippo capture --last-session` in sequence and tees both outputs to the log file. The parent returns in <100ms so the TUI teardown cannot SIGTERM the child mid-consolidation.
 - `SessionStart` runs `hippo last-sleep` at the next startup — prints the previous consolidation between banners and clears the log.
 
 OpenCode added Claude-Code-compatible session hooks in Jan 2026, so the schema matches exactly.

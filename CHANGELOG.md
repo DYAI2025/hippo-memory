@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.23.0 (2026-04-13)
+
+### Fixed
+- **SessionEnd hook no longer gets SIGTERM'd by TUI teardown.** 0.22.1 installed `hippo sleep --log-file` and `hippo capture --last-session --log-file` as two parallel SessionEnd entries. Claude Code and OpenCode fire SessionEnd hooks while tearing down the TUI, and the process group is killed before the children finish — so the log usually only contained the `consolidating memory...` / `capturing session...` start lines, never the `sleep complete` / `capture complete` markers. 0.23.0 collapses both into a single `hippo session-end --log-file <path>` entry whose parent returns in <100ms after spawning a fully detached Node child (via `child_process.spawn({detached: true, stdio: 'ignore', windowsHide: true}).unref()`). The detached child runs sleep → capture in sequence and writes both outputs to the log. Cross-platform (Windows/macOS/Linux) — no shell wrappers, no `nohup`, no `start /B` quoting hell.
+
+### Added
+- **`hippo session-end` subcommand.** Reads stdin synchronously to extract `transcript_path` from the SessionEnd payload, spawns the detached worker, and exits. Short SessionEnd timeout (5s) because the parent returns immediately.
+- **Internal `__session-end-worker` subcommand.** Runs sleep → capture sequentially inside the detached child. Failures in one stage do not block the other; both tee their output to the shared log file.
+
+### Changed
+- **Auto-migration from 0.22.x split entries.** Re-running `hippo init`, `hippo hook install <target>`, or `hippo setup` detects the old split `hippo sleep --log-file` + `hippo capture --last-session --log-file` SessionEnd entries and collapses them into a single `hippo session-end --log-file` entry. Idempotent — existing 0.22.x installs just need one invocation.
+- **Claude Code plugin `hooks.json`** switched its SessionEnd to `hippo session-end`, matching the JSON-hook install path. Also added `hippo last-sleep` to SessionStart so plugin users see the previous session's consolidation output between banners.
+
+### Internal
+- `InstallResult` replaced `installedSessionCapture` with `migratedSplitSessionEnd` (the migration flag for the 0.22.x two-entry form).
+- `tests/hooks.test.ts` rewritten against the single-entry schema; all 19 cases plus the 481 full-suite tests pass.
+
 ## 0.22.1 (2026-04-13)
 
 ### Fixed
