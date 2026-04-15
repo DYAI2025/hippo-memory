@@ -27,6 +27,10 @@ import { loadConfig } from './config.js';
 const DECAY_THRESHOLD = 0.05;
 const MERGE_OVERLAP_THRESHOLD = 0.35;  // Jaccard similarity for "related"
 const MERGE_MIN_CLUSTER = 2;            // minimum cluster size to merge
+// Contradictions should be gated by content overlap, not shared tags. Tags like
+// `feedback` / `policy` are too coarse and can make unrelated rules look like
+// conflicts before the polarity heuristics run.
+const CONFLICT_OVERLAP_THRESHOLD = 0.55;
 
 export interface ConsolidationResult {
   decayed: number;
@@ -298,10 +302,9 @@ function detectConflicts(
 function describeConflict(a: MemoryEntry, b: MemoryEntry): { reason: string; score: number } | null {
   const strippedOverlap = textOverlap(stripConflictPolarity(a.content), stripConflictPolarity(b.content));
   const rawOverlap = textOverlap(a.content, b.content);
-  const tagOverlap = jaccard(a.tags, b.tags);
-  const overlapScore = Math.max(strippedOverlap, rawOverlap, tagOverlap * 0.75);
+  const overlapScore = Math.max(strippedOverlap, rawOverlap);
 
-  if (overlapScore < 0.55) return null;
+  if (overlapScore < CONFLICT_OVERLAP_THRESHOLD) return null;
 
   const polarityA = inferConflictPolarity(a.content);
   const polarityB = inferConflictPolarity(b.content);
@@ -351,6 +354,7 @@ function inferConflictPolarity(text: string): 'positive' | 'negative' | 'neutral
   ];
   const positivePatterns = [
     ' enabled ', ' enable ', ' works ', ' working ', ' true ', ' available ', ' present ', ' on ',
+    ' always ', ' must ',
   ];
 
   if (containsAny(lowered, negativePatterns)) return 'negative';
@@ -370,15 +374,3 @@ function containsAny(text: string, needles: string[]): boolean {
   return needles.some((needle) => text.includes(needle));
 }
 
-function jaccard(a: string[], b: string[]): number {
-  const setA = new Set(a.map((item) => item.toLowerCase()));
-  const setB = new Set(b.map((item) => item.toLowerCase()));
-  if (setA.size === 0 && setB.size === 0) return 0;
-
-  let intersection = 0;
-  for (const item of setA) {
-    if (setB.has(item)) intersection++;
-  }
-  const union = setA.size + setB.size - intersection;
-  return union > 0 ? intersection / union : 0;
-}
