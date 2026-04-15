@@ -140,6 +140,134 @@ describe('Merge pass', () => {
     expect(loadedB?.conflicts_with).toContain(a.id);
   });
 
+  it('detects reworded contradictions, not just near-duplicate wording', () => {
+    initStore(tmpDir);
+
+    const a = createMemory('API auth must be enabled in prod', {
+      layer: Layer.Episodic,
+      tags: ['auth', 'prod'],
+    });
+    const b = createMemory('Disable API auth in prod', {
+      layer: Layer.Episodic,
+      tags: ['auth', 'prod'],
+    });
+    writeEntry(tmpDir, a);
+    writeEntry(tmpDir, b);
+
+    consolidate(tmpDir, { now: new Date() });
+
+    const conflicts = listMemoryConflicts(tmpDir);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].reason).toMatch(/enabled\/disabled mismatch|always\/never mismatch|negation polarity mismatch/i);
+  });
+
+  it('preserves contradiction detection across multiple polarity patterns', () => {
+    initStore(tmpDir);
+
+    const pairs = [
+      [
+        'Always use Sled for local storage',
+        'Never use Sled for local storage',
+      ],
+      [
+        'API auth must be enabled in prod',
+        'Disable API auth in prod',
+      ],
+      [
+        'Production deploys must require approval',
+        'Production deploys should not require approval',
+      ],
+      [
+        'Metrics endpoint is available in staging',
+        'Metrics endpoint is missing in staging',
+      ],
+      [
+        'Background sync works on iOS',
+        'Background sync is broken on iOS',
+      ],
+    ] as const;
+
+    for (const [left, right] of pairs) {
+      const caseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hippo-consolidate-case-'));
+      try {
+        initStore(caseDir);
+
+        const a = createMemory(left, { layer: Layer.Episodic, tags: ['conflict-check'] });
+        const b = createMemory(right, { layer: Layer.Episodic, tags: ['conflict-check'] });
+        writeEntry(caseDir, a);
+        writeEntry(caseDir, b);
+
+        consolidate(caseDir, { now: new Date() });
+
+        const conflicts = listMemoryConflicts(caseDir);
+        expect(conflicts, `${left} <> ${right}`).toHaveLength(1);
+      } finally {
+        fs.rmSync(caseDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('does not flag unrelated policy memories just because they share tags and opposite polarity words', () => {
+    initStore(tmpDir);
+
+    const a = createMemory('Always create a worktree when working in exemem-workspace', {
+      layer: Layer.Episodic,
+      tags: ['feedback', 'policy'],
+    });
+    const b = createMemory('Never touch other agents worktrees', {
+      layer: Layer.Episodic,
+      tags: ['feedback', 'policy'],
+    });
+    writeEntry(tmpDir, a);
+    writeEntry(tmpDir, b);
+
+    consolidate(tmpDir, { now: new Date() });
+
+    expect(listMemoryConflicts(tmpDir)).toHaveLength(0);
+    expect(readEntry(tmpDir, a.id)?.conflicts_with ?? []).toEqual([]);
+    expect(readEntry(tmpDir, b.id)?.conflicts_with ?? []).toEqual([]);
+  });
+
+  it('does not flag the unrelated wording pairs reported in PR #11', () => {
+    initStore(tmpDir);
+
+    const pairs = [
+      [
+        'Always create a worktree when working in exemem-workspace',
+        "Don't touch other agents' worktrees",
+      ],
+      [
+        'Schema service owns schema creation',
+        'Schemas are global',
+      ],
+      [
+        'Multi-node dogfood snapshots',
+        'Dogfood database snapshot',
+      ],
+    ] as const;
+
+    const ids = pairs.flatMap(([left, right], index) => {
+      const leftEntry = createMemory(left, {
+        layer: Layer.Episodic,
+        tags: [`pair-${index}`, 'feedback', 'policy'],
+      });
+      const rightEntry = createMemory(right, {
+        layer: Layer.Episodic,
+        tags: [`pair-${index}`, 'feedback', 'policy'],
+      });
+      writeEntry(tmpDir, leftEntry);
+      writeEntry(tmpDir, rightEntry);
+      return [leftEntry.id, rightEntry.id];
+    });
+
+    consolidate(tmpDir, { now: new Date() });
+
+    expect(listMemoryConflicts(tmpDir)).toHaveLength(0);
+    for (const id of ids) {
+      expect(readEntry(tmpDir, id)?.conflicts_with ?? []).toEqual([]);
+    }
+  });
+
   it('resolves open conflicts when the contradiction disappears', () => {
     initStore(tmpDir);
 
