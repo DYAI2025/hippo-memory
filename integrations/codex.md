@@ -1,59 +1,45 @@
 # Hippo + Codex (OpenAI) Integration
 
-## Auto-install (recommended)
+Codex does not currently give Hippo a true `SessionEnd` hook in the same way Claude Code and OpenCode do, so Hippo uses a launcher wrapper for Codex session-end consolidation.
 
-If your project has an `AGENTS.md`, just run:
+## What the Codex integration does
 
-```bash
-hippo init
-```
+Hippo's Codex integration now does two things:
 
-Hippo auto-detects the Codex config and patches `AGENTS.md` with the hook block below. No copy-paste needed.
+1. Patches `AGENTS.md` in the current project if it exists, so the agent still runs `hippo context`, `hippo remember`, and `hippo outcome` during normal work.
+2. Wraps the detected `codex` launcher in place and writes metadata in `~/.hippo/integrations/codex.json`.
 
----
+The wrapper starts the real Codex binary, waits for the session to exit, then spawns a detached Hippo worker that runs:
 
-## AGENTS.md snippet
+1. `hippo sleep`
+2. `hippo capture --last-session --transcript <codex session file>`
 
-```markdown
-## Project Memory (Hippo)
+Both commands tee output to `~/.hippo/logs/codex-sleep.log`.
 
-At the start of every session, run:
-```bash
-hippo context --auto --budget 1500
-```
-Read the output before writing any code.
+On the next wrapped Codex start, Hippo prints that log via `hippo last-sleep` before launching the real Codex process, so you can see what was consolidated.
 
-On errors or unexpected behaviour:
-```bash
-hippo remember "<description of what went wrong>" --error
-```
+## Install and updates
 
-On task completion:
-```bash
-hippo outcome --good
-```
+Hippo now attempts this automatically on install and update. If Hippo was installed before Codex, common Hippo commands will also try to self-heal the integration the next time they run.
 
-After significant coding sessions:
-```bash
-hippo learn --git
-```
-```
-
----
-
-## Multi-repo learning
-
-If you work across multiple repos, set up a weekly cron to scan all of them:
+You can still run the manual repair path:
 
 ```bash
-hippo learn --git --repos "~/repo-a,~/repo-b,~/repo-c" --days 7
-hippo sleep
+hippo hook install codex
 ```
 
-This extracts lessons from fix/revert/bug commits across repos and consolidates them into the memory store.
+Hippo renames the original launcher to a sibling backup such as `codex.hippo-real.cmd` or `codex.hippo-real.exe`, then drops a wrapper at the command path that users already invoke. No extra `PATH` step is required.
+
+## Session source
+
+Hippo captures Codex sessions from the real session transcript files under `~/.codex/sessions/`, not just from `history.jsonl`.
+
+The wrapper records the `history.jsonl` byte offset at launch, finds the new `session_id` written during that run, resolves the matching transcript file in `~/.codex/sessions/...`, and feeds that transcript to `hippo capture --last-session`.
+
+This gives Hippo access to both user messages and assistant responses from the Codex rollout transcript.
 
 ## Notes
 
-- Hippo stores everything in `.hippo/` as markdown files. No database.
-- `--budget 1500` is a good default for sub-agents. Increase to 3000 for complex tasks.
-- Codex agents using `hippo context --auto` get task-relevant memories automatically detected from git state.
+- This wrapper path is specific to Codex. Claude Code and OpenCode keep using native `SessionStart`/`SessionEnd` hooks.
+- OpenClaw keeps using the Hippo plugin path, not the Codex wrapper.
+- If no local `.hippo/` store exists in the working directory, Hippo cannot consolidate project memory there. Run `hippo init` inside the repo first.

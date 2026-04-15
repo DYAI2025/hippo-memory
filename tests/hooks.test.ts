@@ -354,7 +354,7 @@ describe('JSON hook installer', () => {
       expect(tools.find((t) => t.name === 'claude-code')?.kind).toBe('json-hook');
       expect(tools.find((t) => t.name === 'opencode')?.kind).toBe('json-hook');
       expect(tools.find((t) => t.name === 'openclaw')?.kind).toBe('plugin');
-      expect(tools.find((t) => t.name === 'codex')?.kind).toBe('markdown-instruction');
+      expect(tools.find((t) => t.name === 'codex')?.kind).toBe('wrapper');
       expect(tools.find((t) => t.name === 'cursor')?.kind).toBe('markdown-instruction');
       expect(tools.find((t) => t.name === 'pi')?.kind).toBe('markdown-instruction');
     });

@@ -35,6 +35,12 @@ import {
   resolveJsonHookPaths,
   detectInstalledTools,
   defaultSleepLogPath,
+  ensureCodexWrapperInstalled,
+  installCodexWrapper,
+  uninstallCodexWrapper,
+  resolveCodexSessionTranscript,
+  resolveCodexWrapperPaths,
+  type CodexWrapperMetadata,
   type JsonHookTarget,
 } from './hooks.js';
 import {
@@ -148,6 +154,10 @@ function parseArgs(argv: string[]): { command: string; args: string[]; flags: Re
   let i = 0;
   while (i < rest.length) {
     const part = rest[i];
+    if (part === '--') {
+      args.push(...rest.slice(i + 1));
+      break;
+    }
     if (part.startsWith('--')) {
       const key = part.slice(2);
       const next = rest[i + 1];
@@ -1046,6 +1056,173 @@ function cmdSessionEndWorker(
     cmdCapture(hippoRoot, captureOpts);
   } catch {
     // Same treatment — the failure line is already in the log.
+  }
+}
+
+function loadCodexWrapperMetadata(): CodexWrapperMetadata {
+  const { metadataPath } = resolveCodexWrapperPaths();
+  if (!fs.existsSync(metadataPath)) {
+    throw new Error('Codex wrapper is not installed. Run `hippo hook install codex` first.');
+  }
+  return JSON.parse(fs.readFileSync(metadataPath, 'utf8')) as CodexWrapperMetadata;
+}
+
+function quoteCmdArg(arg: string): string {
+  if (arg.length === 0) return '""';
+  if (!/[ \t"&()^<>|]/.test(arg)) return arg;
+  return `"${arg.replace(/"/g, '""')}"`;
+}
+
+function spawnRealCodex(
+  realCodexPath: string,
+  forwardArgs: string[],
+  cwd: string,
+): ReturnType<typeof spawn> {
+  const ext = path.extname(realCodexPath).toLowerCase();
+
+  if (process.platform === 'win32' && ext === '.ps1') {
+    return spawn(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', realCodexPath, ...forwardArgs],
+      { cwd, stdio: 'inherit', windowsHide: false },
+    );
+  }
+
+  if (process.platform === 'win32' && (ext === '.cmd' || ext === '.bat')) {
+    const command = `"${realCodexPath}"${forwardArgs.length > 0 ? ` ${forwardArgs.map(quoteCmdArg).join(' ')}` : ''}`;
+    return spawn(
+      'cmd.exe',
+      ['/d', '/s', '/c', command],
+      { cwd, stdio: 'inherit', windowsHide: false },
+    );
+  }
+
+  return spawn(realCodexPath, forwardArgs, { cwd, stdio: 'inherit', windowsHide: false });
+}
+
+function cmdCodexRun(
+  hippoRoot: string,
+  args: string[],
+): void {
+  const metadata = loadCodexWrapperMetadata();
+  const startedAtMs = Date.now();
+  const historyPath = metadata.historyPath;
+  const startOffsetBytes = fs.existsSync(historyPath) ? fs.statSync(historyPath).size : 0;
+
+  try {
+    cmdLastSleep({ path: metadata.logFile });
+  } catch {
+    // best-effort only
+  }
+
+  const child = spawnRealCodex(metadata.realCodexPath, args, process.cwd());
+  child.on('error', (err) => {
+    console.error(`Failed to launch Codex: ${err.message}`);
+    process.exit(1);
+  });
+
+  child.on('exit', (code, signal) => {
+    const workerArgs = [
+      process.argv[1],
+      '__codex-session-end-worker',
+      '--codex-home',
+      path.dirname(historyPath),
+      '--history-path',
+      historyPath,
+      '--start-offset',
+      String(startOffsetBytes),
+      '--started-at',
+      String(startedAtMs),
+      '--log-file',
+      metadata.logFile,
+    ];
+
+    try {
+      const worker = spawn(process.execPath, workerArgs, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      worker.unref();
+    } catch {
+      // Fall back to the inline path if the detached worker cannot be created.
+      cmdCodexSessionEndWorker(hippoRoot, {
+        'codex-home': path.dirname(historyPath),
+        'history-path': historyPath,
+        'start-offset': String(startOffsetBytes),
+        'started-at': String(startedAtMs),
+        'log-file': metadata.logFile,
+      });
+    }
+
+    if (signal) {
+      try {
+        process.kill(process.pid, signal);
+      } catch {
+        process.exit(1);
+      }
+      return;
+    }
+    process.exit(code ?? 0);
+  });
+}
+
+function cmdCodexSessionEndWorker(
+  hippoRoot: string,
+  flags: Record<string, string | boolean | string[]>,
+): void {
+  const logFile = typeof flags['log-file'] === 'string' ? (flags['log-file'] as string) : undefined;
+
+  try {
+    cmdSleep(hippoRoot, logFile ? { 'log-file': logFile } : {});
+  } catch {
+    // sleep errors are already written via cmdSleep
+  }
+
+  try {
+    const codexHome = typeof flags['codex-home'] === 'string'
+      ? (flags['codex-home'] as string)
+      : path.join(os.homedir(), '.codex');
+    const historyPath = typeof flags['history-path'] === 'string'
+      ? (flags['history-path'] as string)
+      : path.join(codexHome, 'history.jsonl');
+    const startOffsetBytes = parseInt(String(flags['start-offset'] ?? '0'), 10) || 0;
+    const startedAtMs = parseInt(String(flags['started-at'] ?? Date.now()), 10) || Date.now();
+    const transcriptPath = resolveCodexSessionTranscript({
+      codexHome,
+      historyPath,
+      startOffsetBytes,
+      startedAtMs,
+    }) ?? undefined;
+
+    const captureOpts: CaptureOptions = {
+      source: 'last-session',
+      transcriptPath,
+      logFile,
+      dryRun: false,
+      global: false,
+    };
+    cmdCapture(hippoRoot, captureOpts);
+  } catch {
+    // capture path logs its own failures
+  }
+}
+
+function shouldAutoInstallCodexWrapper(currentCommand: string, currentArgs: string[]): boolean {
+  if (process.env.HIPPO_SKIP_AUTO_INTEGRATIONS === '1') return false;
+  if (!['context', 'remember', 'recall', 'sleep', 'capture', 'outcome', 'status', 'init'].includes(currentCommand)) {
+    return false;
+  }
+  if (currentCommand === 'init' && currentArgs.includes('--no-hooks')) return false;
+  return true;
+}
+
+function maybeAutoInstallCodexWrapper(currentCommand: string, currentArgs: string[]): void {
+  if (!shouldAutoInstallCodexWrapper(currentCommand, currentArgs)) return;
+  try {
+    ensureCodexWrapperInstalled();
+  } catch {
+    // best-effort only
   }
 }
 
@@ -2379,7 +2556,8 @@ On task completion:
 hippo outcome --good
 \`\`\`
 
-When ending a session, capture a brief summary:
+When Hippo's Codex wrapper is installed, session-end capture runs automatically.
+If the wrapper is not installed, capture a brief summary manually:
 \`\`\`bash
 hippo capture --stdin <<< '<decisions, errors, lessons — 2-5 bullets>'
 \`\`\`
@@ -2567,6 +2745,10 @@ function cmdHook(
       } else if (result.migratedLegacySessionEnd) {
         console.log(`Migrated legacy SessionEnd entry to the new detached form`);
       }
+    } else if (target === 'codex') {
+      const result = installCodexWrapper();
+      console.log(`Installed Codex session-end integration -> ${result.metadataPath}`);
+      console.log(`   Wrapped detected Codex launcher at ${result.commandPath}`);
     }
 
     return;
@@ -2581,29 +2763,31 @@ function cmdHook(
     const hook = HOOKS[target];
     const filepath = path.resolve(process.cwd(), hook.file);
 
-    if (!fs.existsSync(filepath)) {
-      console.log(`${hook.file} not found, nothing to uninstall.`);
-      return;
+    if (fs.existsSync(filepath)) {
+      const existing = fs.readFileSync(filepath, 'utf8');
+      if (existing.includes(HOOK_MARKERS.start)) {
+        const re = new RegExp(
+          `\\n?${escapeRegex(HOOK_MARKERS.start)}[\\s\\S]*?${escapeRegex(HOOK_MARKERS.end)}\\n?`,
+          'g'
+        );
+        const cleaned = existing.replace(re, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        fs.writeFileSync(filepath, cleaned + '\n', 'utf8');
+        console.log(`Removed Hippo hook from ${hook.file}`);
+      } else {
+        console.log(`No Hippo hook found in ${hook.file}.`);
+      }
+    } else {
+      console.log(`${hook.file} not found, skipping agent-instructions uninstall.`);
     }
-
-    const existing = fs.readFileSync(filepath, 'utf8');
-    if (!existing.includes(HOOK_MARKERS.start)) {
-      console.log(`No Hippo hook found in ${hook.file}.`);
-      return;
-    }
-
-    const re = new RegExp(
-      `\\n?${escapeRegex(HOOK_MARKERS.start)}[\\s\\S]*?${escapeRegex(HOOK_MARKERS.end)}\\n?`,
-      'g'
-    );
-    const cleaned = existing.replace(re, '\n').replace(/\n{3,}/g, '\n\n').trim();
-    fs.writeFileSync(filepath, cleaned + '\n', 'utf8');
-    console.log(`Removed Hippo hook from ${hook.file}`);
 
     // For JSON-hook tools, also strip their SessionEnd/SessionStart entries.
     if (target === 'claude-code' || target === 'opencode') {
       if (uninstallJsonHooks(target)) {
         console.log(`Removed hippo hooks from ${target} settings`);
+      }
+    } else if (target === 'codex') {
+      if (uninstallCodexWrapper()) {
+        console.log('Removed Codex wrapper integration');
       }
     }
 
@@ -2630,6 +2814,7 @@ function cmdSetup(flags: Record<string, string | boolean | string[]>): void {
   console.log('');
 
   const jsonTools = tools.filter((t) => t.kind === 'json-hook' && (t.detected || forceAll));
+  const wrapperTools = tools.filter((t) => t.kind === 'wrapper' && (t.detected || forceAll));
   const skipped = tools.filter((t) => t.kind === 'json-hook' && !t.detected && !forceAll);
   const markdownTools = tools.filter((t) => t.kind === 'markdown-instruction' && t.detected);
   const pluginTools = tools.filter((t) => t.kind === 'plugin' && t.detected);
@@ -2663,6 +2848,23 @@ function cmdSetup(flags: Record<string, string | boolean | string[]>): void {
 
   for (const tool of skipped) {
     console.log(`  ${tool.name.padEnd(14)} not detected at ${tool.configDir} -- skipping`);
+  }
+
+  for (const tool of wrapperTools) {
+    if (dryRun) {
+      console.log(`[dry-run] would wrap the detected ${tool.name} launcher in place`);
+      continue;
+    }
+    if (tool.name === 'codex') {
+      const result = ensureCodexWrapperInstalled();
+      if (result.status === 'installed') {
+        console.log(`  ${tool.name.padEnd(14)} wrapped launcher -> ${result.commandPath}`);
+      } else if (result.status === 'already-installed') {
+        console.log(`  ${tool.name.padEnd(14)} already wrapped -> ${result.commandPath}`);
+      } else {
+        console.log(`  ${tool.name.padEnd(14)} not found on PATH -- skipping`);
+      }
+    }
   }
 
   if (pluginTools.length > 0) {
@@ -2925,10 +3127,12 @@ Commands:
   last-sleep               Print the last 'hippo sleep --log-file' output and clear it
     --path <p>             Log path (default: ~/.hippo/logs/last-sleep.log)
     --keep                 Print without clearing
+  codex-run [-- ...args]   Launch real Codex behind Hippo's session-end wrapper
   hook <sub> [target]      Manage framework integrations
     hook list              Show available hooks
     hook install <target>  Install hook (claude-code|codex|cursor|openclaw|opencode|pi)
-                           claude-code also installs SessionEnd+SessionStart in settings.json
+                           claude-code/opencode install SessionEnd+SessionStart;
+                           codex wraps the detected launcher in place
     hook uninstall <target> Remove hook
   decide "<decision>"      Record an architectural decision (90-day half-life)
     --context "<why>"      Why this decision was made
@@ -2993,6 +3197,7 @@ const { command, args, flags } = parseArgs(process.argv);
 const hippoRoot = getHippoRoot(process.cwd());
 
 async function main(): Promise<void> {
+  maybeAutoInstallCodexWrapper(command, args);
   switch (command) {
     case 'init':
       cmdInit(hippoRoot, flags);
@@ -3032,6 +3237,14 @@ async function main(): Promise<void> {
 
     case '__session-end-worker':
       cmdSessionEndWorker(hippoRoot, flags);
+      break;
+
+    case 'codex-run':
+      cmdCodexRun(hippoRoot, args);
+      break;
+
+    case '__codex-session-end-worker':
+      cmdCodexSessionEndWorker(hippoRoot, flags);
       break;
 
     case 'dedup':

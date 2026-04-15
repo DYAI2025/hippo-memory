@@ -261,31 +261,58 @@ export function summariseTranscript(jsonl: string): string {
     }
     if (!entry || typeof entry !== 'object') continue;
     const e = entry as Record<string, unknown>;
-    if (e.type !== 'user' && e.type !== 'assistant') continue;
 
-    const message = e.message as Record<string, unknown> | undefined;
-    if (!message) continue;
-    const content = message.content;
+    if (e.type === 'user' || e.type === 'assistant') {
+      const message = e.message as Record<string, unknown> | undefined;
+      if (!message) continue;
+      const content = message.content;
 
-    if (e.type === 'user') {
-      // Plain text user messages only (skip tool_result arrays)
-      if (typeof content === 'string' && content.trim()) {
-        userMessages.push(content.trim());
-      }
-    } else if (e.type === 'assistant' && Array.isArray(content)) {
-      // Keep assistant text blocks; drop thinking + tool_use
-      const chunks: string[] = [];
-      for (const block of content) {
-        if (block && typeof block === 'object') {
-          const b = block as Record<string, unknown>;
-          if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-            chunks.push(b.text.trim());
+      if (e.type === 'user') {
+        // Plain text user messages only (skip tool_result arrays)
+        if (typeof content === 'string' && content.trim()) {
+          userMessages.push(content.trim());
+        }
+      } else if (Array.isArray(content)) {
+        // Keep assistant text blocks; drop thinking + tool_use
+        const chunks: string[] = [];
+        for (const block of content) {
+          if (block && typeof block === 'object') {
+            const b = block as Record<string, unknown>;
+            if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+              chunks.push(b.text.trim());
+            }
           }
         }
+        if (chunks.length > 0) {
+          assistantTexts.push(chunks.join('\n'));
+        }
       }
-      if (chunks.length > 0) {
-        assistantTexts.push(chunks.join('\n'));
+      continue;
+    }
+
+    // Codex rollout transcript shape: response_item -> payload.message
+    if (e.type === 'response_item') {
+      const payload = e.payload as Record<string, unknown> | undefined;
+      if (!payload || payload.type !== 'message') continue;
+      const role = payload.role;
+      const content = payload.content;
+      if (!Array.isArray(content)) continue;
+
+      const chunks: string[] = [];
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const b = block as Record<string, unknown>;
+        if (role === 'user' && b.type === 'input_text' && typeof b.text === 'string' && b.text.trim()) {
+          chunks.push(b.text.trim());
+        }
+        if (role === 'assistant' && b.type === 'output_text' && typeof b.text === 'string' && b.text.trim()) {
+          chunks.push(b.text.trim());
+        }
       }
+
+      if (chunks.length === 0) continue;
+      if (role === 'user') userMessages.push(chunks.join('\n'));
+      if (role === 'assistant') assistantTexts.push(chunks.join('\n'));
     }
   }
 

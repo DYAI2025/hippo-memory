@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.24.0 (2026-04-15)
+
+### Added
+- **Codex auto-wrap on install and update.** Installing or upgrading `hippo-memory` now runs a postinstall step that looks for `codex` on `PATH`, renames the original launcher to a sibling backup such as `codex.hippo-real.cmd` / `codex.hippo-real.exe`, and drops a Hippo wrapper at the command path users already run. No extra PATH prep, no manual launcher swap.
+- **Codex self-heal install path.** Common Hippo commands now opportunistically install the Codex wrapper if Hippo was installed before Codex or the postinstall step could not run at package install time.
+- **Codex transcript capture support.** `hippo capture --last-session` now understands Codex rollout transcript JSONL and extracts user and assistant message text from Codex `response_item` payloads.
+
+### Changed
+- **Codex integration is no longer AGENTS-only.** `hippo setup` and `hippo hook install codex` now wrap the detected launcher in place instead of asking users to put `~/.hippo/bin` first on `PATH`.
+- **Codex docs updated to match the real install path.** README and integration docs now describe automatic wrapping on install/update and the in-place launcher behavior.
+
+### Internal
+- Added `src/postinstall.ts` plus `scripts/postinstall.cjs` so published packages apply the Codex integration automatically without making `npm install` fail when Codex is absent.
+- Added `tests/codex-wrapper.test.ts` for in-place launcher wrapping, uninstall restore, PATH discovery, and Codex transcript resolution. Full suite passes: 487 tests.
+
 ## 0.23.0 (2026-04-13)
 
 ### Fixed

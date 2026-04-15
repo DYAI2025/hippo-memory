@@ -53,6 +53,49 @@ describe('summariseTranscript', () => {
     expect(summary).not.toContain('noisy tool output');
   });
 
+  it('extracts user and assistant text from Codex rollout transcripts', () => {
+    const jsonl = transcriptJsonl([
+      {
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'developer',
+          content: [{ type: 'input_text', text: 'developer instructions' }],
+        },
+      },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'please build the codex wrapper' }],
+        },
+      },
+      {
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          phase: 'commentary',
+          content: [{ type: 'output_text', text: 'I am adding the failing tests first.' }],
+        },
+      },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'agent_message',
+          message: 'duplicate commentary copy that should not be required',
+          phase: 'commentary',
+        },
+      },
+    ]);
+
+    const summary = summariseTranscript(jsonl);
+    expect(summary).toContain('please build the codex wrapper');
+    expect(summary).toContain('I am adding the failing tests first.');
+    expect(summary).not.toContain('developer instructions');
+  });
+
   it('keeps only the last 20 user messages (tail only)', () => {
     const entries = Array.from({ length: 30 }, (_, i) => ({
       type: 'user',

@@ -60,6 +60,12 @@ hippo recall "data pipeline issues" --budget 2000
 
 ---
 
+### What's new in v0.24.0
+
+- **Codex session-end memory is now automatic on install/update.** Hippo no longer tells Codex users to fix `PATH` by hand. The published package now attempts to wrap the detected `codex` launcher during install or upgrade, and it can self-heal on later Hippo commands if Codex shows up afterward.
+- **Codex wrapper now patches the real launcher in place.** Hippo renames the original launcher to a sibling backup such as `codex.hippo-real.cmd` / `codex.hippo-real.exe`, writes a wrapper at the command users already invoke, and runs `hippo sleep` plus `hippo capture --last-session` after `/exit`.
+- **Codex rollout transcripts are captured directly.** `hippo capture --last-session` now understands Codex `response_item` transcript JSONL, so session-end capture uses the real Codex transcript rather than a partial history reconstruction.
+
 ### What's new in v0.23.0
 
 - **SessionEnd no longer gets killed by TUI teardown.** Claude Code / OpenCode send SIGTERM to hook children as the TUI shuts down. The old 0.22.x split entries (`hippo sleep` + `hippo capture`) ran in parallel and were both killed before completion, so the log rarely had the completion markers. 0.23.0 installs a single `hippo session-end --log-file <path>` entry that spawns a fully detached Node child (via `spawn({detached:true, stdio:'ignore', windowsHide:true}).unref()`), returns in <100ms, and lets the worker run sleep → capture to completion independently. Cross-platform — Windows, macOS, Linux.
@@ -197,7 +203,7 @@ hippo init
 #    Auto-installed claude-code hook in CLAUDE.md
 ```
 
-If you have a `CLAUDE.md`, it patches it. `AGENTS.md` for Codex/OpenClaw/OpenCode. `.cursorrules` for Cursor. No manual `hook install` needed. Your agent starts using Hippo on its next session.
+If you have a `CLAUDE.md`, it patches it. `AGENTS.md` for Codex/OpenClaw/OpenCode. `.cursorrules` for Cursor. For Codex, Hippo also wraps the detected launcher in place so `/exit` can consolidate memory without a manual PATH step. No manual `hook install` needed. Your agent starts using Hippo on its next session.
 
 It also sets up a daily cron job (6:15am) that runs `hippo learn --git` and `hippo sleep` automatically. Memories get captured from your commits and consolidated every day without you thinking about it.
 
@@ -694,8 +700,8 @@ hippo watch "npm run build"
 
 | Framework | Detected by | Patches |
 |-----------|------------|---------|
-| Claude Code | `CLAUDE.md` or `.claude/settings.json` | `CLAUDE.md` + Stop hook in `settings.json` |
-| Codex | `AGENTS.md` or `.codex` | `AGENTS.md` |
+| Claude Code | `CLAUDE.md` or `.claude/settings.json` | `CLAUDE.md` + `SessionStart`/`SessionEnd` hooks in `settings.json` |
+| Codex | `AGENTS.md` or `.codex` | `AGENTS.md` + automatic in-place Codex launcher wrapper |
 | Cursor | `.cursorrules` or `.cursor/rules` | `.cursorrules` |
 | OpenClaw | `.openclaw` or `AGENTS.md` | `AGENTS.md` |
 | OpenCode | `.opencode/` or `opencode.json` | `AGENTS.md` |
@@ -707,8 +713,8 @@ No extra commands needed. Just `hippo init` and your agent knows about Hippo.
 If you prefer explicit control:
 
 ```bash
-hippo hook install claude-code   # patches CLAUDE.md + adds Stop hook to settings.json
-hippo hook install codex         # patches AGENTS.md
+hippo hook install claude-code   # patches CLAUDE.md + adds SessionStart/SessionEnd hooks
+hippo hook install codex         # optional repair/manual run: patches AGENTS.md + wraps the detected Codex launcher
 hippo hook install cursor        # patches .cursorrules
 hippo hook install openclaw      # patches AGENTS.md
 hippo hook install opencode      # patches AGENTS.md

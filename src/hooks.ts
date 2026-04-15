@@ -23,8 +23,57 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 
 export type JsonHookTarget = 'claude-code' | 'opencode';
+
+export interface CodexWrapperPaths {
+  wrapperDir: string;
+  metadataPath: string;
+  wrapperCmdPath: string;
+  wrapperPs1Path: string;
+  wrapperShPath: string;
+  logFile: string;
+  runsDir: string;
+  historyPath: string;
+  sessionsDir: string;
+}
+
+export interface CodexWrapperInstallResult {
+  installed: boolean;
+  metadataPath: string;
+  realCodexPath: string;
+  commandPath: string;
+  backupPath: string;
+  installMode: 'same-path' | 'cmd-shim';
+}
+
+export interface CodexWrapperMetadata {
+  originalCodexPath: string;
+  realCodexPath: string;
+  commandPath: string;
+  backupPath: string;
+  installMode: 'same-path' | 'cmd-shim';
+  logFile: string;
+  historyPath: string;
+  sessionsDir: string;
+  installedAt: string;
+}
+
+export interface EnsureCodexWrapperResult {
+  status: 'installed' | 'already-installed' | 'not-found';
+  metadataPath?: string;
+  realCodexPath?: string;
+  commandPath?: string;
+  backupPath?: string;
+}
+
+export interface CodexSessionTranscriptOptions {
+  codexHome: string;
+  historyPath: string;
+  startOffsetBytes: number;
+  startedAtMs: number;
+}
 
 export interface JsonHookPaths {
   settings: string;
@@ -46,7 +95,7 @@ export interface ToolDetection {
   name: string;
   configDir: string;
   detected: boolean;
-  kind: 'json-hook' | 'markdown-instruction' | 'plugin';
+  kind: 'json-hook' | 'markdown-instruction' | 'plugin' | 'wrapper';
   notes?: string;
 }
 
@@ -54,6 +103,7 @@ const HIPPO_SLEEP_MARKER = 'hippo sleep';
 const HIPPO_LAST_SLEEP_MARKER = 'hippo last-sleep';
 const HIPPO_CAPTURE_MARKER = 'hippo capture --last-session';
 const HIPPO_SESSION_END_MARKER = 'hippo session-end';
+const HIPPO_CODEX_WRAPPER_MARKER = 'hippo codex wrapper';
 
 function homeDir(): string {
   return process.env.HOME || process.env.USERPROFILE || os.homedir();
@@ -65,6 +115,382 @@ function homeDir(): string {
  */
 export function defaultSleepLogPath(): string {
   return path.join(homeDir(), '.hippo', 'logs', 'last-sleep.log');
+}
+
+export function resolveCodexWrapperPaths(): CodexWrapperPaths {
+  const home = homeDir();
+  const codexHome = path.join(home, '.codex');
+  const wrapperDir = path.join(home, '.hippo', 'bin');
+  return {
+    wrapperDir,
+    metadataPath: path.join(home, '.hippo', 'integrations', 'codex.json'),
+    wrapperCmdPath: path.join(wrapperDir, 'codex.cmd'),
+    wrapperPs1Path: path.join(wrapperDir, 'codex.ps1'),
+    wrapperShPath: path.join(wrapperDir, 'codex'),
+    logFile: path.join(home, '.hippo', 'logs', 'codex-sleep.log'),
+    runsDir: path.join(home, '.hippo', 'runs', 'codex'),
+    historyPath: path.join(codexHome, 'history.jsonl'),
+    sessionsDir: path.join(codexHome, 'sessions'),
+  };
+}
+
+function pathEquals(a: string, b: string): boolean {
+  return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+}
+
+function readCodexWrapperMetadata(): CodexWrapperMetadata | null {
+  const { metadataPath } = resolveCodexWrapperPaths();
+  if (!fs.existsSync(metadataPath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(metadataPath, 'utf8')) as CodexWrapperMetadata;
+  } catch {
+    return null;
+  }
+}
+
+function readTextFile(filePath: string): string | null {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function isHippoCodexWrapperFile(filePath: string): boolean {
+  if (!fs.existsSync(filePath)) return false;
+  const text = readTextFile(filePath);
+  return typeof text === 'string' && text.includes(HIPPO_CODEX_WRAPPER_MARKER);
+}
+
+function isCodexWrapperMetadataValid(metadata: CodexWrapperMetadata | null): metadata is CodexWrapperMetadata {
+  if (!metadata) return false;
+  return (
+    typeof metadata.originalCodexPath === 'string' &&
+    typeof metadata.realCodexPath === 'string' &&
+    typeof metadata.commandPath === 'string' &&
+    typeof metadata.backupPath === 'string' &&
+    fs.existsSync(metadata.realCodexPath) &&
+    fs.existsSync(metadata.backupPath) &&
+    isHippoCodexWrapperFile(metadata.commandPath)
+  );
+}
+
+function resolveHippoCliPath(): string {
+  return fileURLToPath(new URL('../bin/hippo.js', import.meta.url));
+}
+
+function quoteForShell(value: string): string {
+  return `"${value.replace(/(["\\$`])/g, '\\$1')}"`;
+}
+
+function quoteForPowerShell(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function quoteForCmd(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function resolveCodexInstallPlan(originalCodexPath: string): {
+  commandPath: string;
+  backupPath: string;
+  installMode: 'same-path' | 'cmd-shim';
+} {
+  const dir = path.dirname(originalCodexPath);
+  const ext = path.extname(originalCodexPath).toLowerCase();
+  const name = path.basename(originalCodexPath, ext);
+  const backupPath = path.join(dir, `${name}.hippo-real${ext}`);
+
+  if (process.platform === 'win32' && ext === '.exe') {
+    return {
+      commandPath: path.join(dir, `${name}.cmd`),
+      backupPath,
+      installMode: 'cmd-shim',
+    };
+  }
+
+  return {
+    commandPath: originalCodexPath,
+    backupPath,
+    installMode: 'same-path',
+  };
+}
+
+function writeCodexLauncherWrapper(commandPath: string): void {
+  const ext = path.extname(commandPath).toLowerCase();
+  const nodePath = process.execPath;
+  const hippoCliPath = resolveHippoCliPath();
+
+  if (process.platform === 'win32' && ext === '.ps1') {
+    writeExecutableFile(
+      commandPath,
+      [
+        `# ${HIPPO_CODEX_WRAPPER_MARKER}`,
+        `& ${quoteForPowerShell(nodePath)} ${quoteForPowerShell(hippoCliPath)} codex-run -- @args`,
+        '',
+      ].join('\n'),
+    );
+    return;
+  }
+
+  if (process.platform === 'win32' && (ext === '.cmd' || ext === '.bat')) {
+    writeExecutableFile(
+      commandPath,
+      [
+        '@echo off',
+        `REM ${HIPPO_CODEX_WRAPPER_MARKER}`,
+        `${quoteForCmd(nodePath)} ${quoteForCmd(hippoCliPath)} codex-run -- %*`,
+        '',
+      ].join('\r\n'),
+    );
+    return;
+  }
+
+  writeExecutableFile(
+    commandPath,
+    [
+      '#!/usr/bin/env sh',
+      `# ${HIPPO_CODEX_WRAPPER_MARKER}`,
+      `exec ${quoteForShell(nodePath)} ${quoteForShell(hippoCliPath)} codex-run -- "$@"`,
+      '',
+    ].join('\n'),
+  );
+}
+
+function cleanupLegacyCodexPathWrappers(paths: CodexWrapperPaths): void {
+  for (const filePath of [paths.wrapperCmdPath, paths.wrapperPs1Path, paths.wrapperShPath]) {
+    if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+  }
+}
+
+export function detectRealCodexPath(): string | null {
+  const metadata = readCodexWrapperMetadata();
+  if (isCodexWrapperMetadataValid(metadata)) return metadata.realCodexPath;
+
+  const { wrapperDir } = resolveCodexWrapperPaths();
+  const entries = (process.env.PATH ?? '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .filter((entry) => !pathEquals(entry, wrapperDir));
+
+  const names = process.platform === 'win32'
+    ? ['codex.cmd', 'codex.ps1', 'codex.exe', 'codex']
+    : ['codex'];
+
+  for (const entry of entries) {
+    for (const name of names) {
+      const candidate = path.join(entry, name);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+
+  return null;
+}
+
+function ensureDir(dir: string): void {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+function writeExecutableFile(filePath: string, content: string): void {
+  fs.writeFileSync(filePath, content, 'utf8');
+  try {
+    fs.chmodSync(filePath, 0o755);
+  } catch {
+    // chmod is best-effort on Windows
+  }
+}
+
+export function installCodexWrapper(realCodexPath?: string): CodexWrapperInstallResult {
+  const existingMetadata = readCodexWrapperMetadata();
+  if (isCodexWrapperMetadataValid(existingMetadata) && !realCodexPath) {
+    cleanupLegacyCodexPathWrappers(resolveCodexWrapperPaths());
+    return {
+      installed: true,
+      metadataPath: resolveCodexWrapperPaths().metadataPath,
+      realCodexPath: existingMetadata.realCodexPath,
+      commandPath: existingMetadata.commandPath,
+      backupPath: existingMetadata.backupPath,
+      installMode: existingMetadata.installMode,
+    };
+  }
+
+  const resolvedRealCodexPath = realCodexPath ?? detectRealCodexPath();
+  if (!resolvedRealCodexPath) {
+    throw new Error('Could not locate the real Codex executable on PATH.');
+  }
+
+  const paths = resolveCodexWrapperPaths();
+  ensureDir(path.dirname(paths.metadataPath));
+  ensureDir(path.dirname(paths.logFile));
+  ensureDir(paths.runsDir);
+  cleanupLegacyCodexPathWrappers(paths);
+
+  const plan = resolveCodexInstallPlan(resolvedRealCodexPath);
+  ensureDir(path.dirname(plan.commandPath));
+
+  if (isCodexWrapperMetadataValid(existingMetadata)) {
+    uninstallCodexWrapper();
+  }
+
+  if (!fs.existsSync(plan.backupPath)) {
+    fs.renameSync(resolvedRealCodexPath, plan.backupPath);
+  }
+  writeCodexLauncherWrapper(plan.commandPath);
+
+  const metadata: CodexWrapperMetadata = {
+    originalCodexPath: resolvedRealCodexPath,
+    realCodexPath: plan.backupPath,
+    commandPath: plan.commandPath,
+    backupPath: plan.backupPath,
+    installMode: plan.installMode,
+    logFile: paths.logFile,
+    historyPath: paths.historyPath,
+    sessionsDir: paths.sessionsDir,
+    installedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(paths.metadataPath, JSON.stringify(metadata, null, 2) + '\n', 'utf8');
+
+  return {
+    installed: true,
+    metadataPath: paths.metadataPath,
+    realCodexPath: metadata.realCodexPath,
+    commandPath: metadata.commandPath,
+    backupPath: metadata.backupPath,
+    installMode: metadata.installMode,
+  };
+}
+
+export function uninstallCodexWrapper(): boolean {
+  const paths = resolveCodexWrapperPaths();
+  let changed = false;
+
+  const metadata = readCodexWrapperMetadata();
+  if (metadata) {
+    if (fs.existsSync(metadata.commandPath) && isHippoCodexWrapperFile(metadata.commandPath)) {
+      fs.rmSync(metadata.commandPath, { force: true });
+      changed = true;
+    }
+    if (fs.existsSync(metadata.backupPath)) {
+      fs.renameSync(metadata.backupPath, metadata.originalCodexPath);
+      changed = true;
+    }
+  }
+
+  cleanupLegacyCodexPathWrappers(paths);
+
+  if (fs.existsSync(paths.metadataPath)) {
+    fs.rmSync(paths.metadataPath, { force: true });
+    changed = true;
+  }
+
+  return changed;
+}
+
+export function ensureCodexWrapperInstalled(): EnsureCodexWrapperResult {
+  const metadata = readCodexWrapperMetadata();
+  if (isCodexWrapperMetadataValid(metadata)) {
+    cleanupLegacyCodexPathWrappers(resolveCodexWrapperPaths());
+    return {
+      status: 'already-installed',
+      metadataPath: resolveCodexWrapperPaths().metadataPath,
+      realCodexPath: metadata.realCodexPath,
+      commandPath: metadata.commandPath,
+      backupPath: metadata.backupPath,
+    };
+  }
+
+  if (metadata) {
+    uninstallCodexWrapper();
+  }
+
+  const detectedRealCodexPath = detectRealCodexPath();
+  if (!detectedRealCodexPath) {
+    return { status: 'not-found' };
+  }
+
+  const result = installCodexWrapper(detectedRealCodexPath);
+  return {
+    status: 'installed',
+    metadataPath: result.metadataPath,
+    realCodexPath: result.realCodexPath,
+    commandPath: result.commandPath,
+    backupPath: result.backupPath,
+  };
+}
+
+function collectFiles(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const out: string[] = [];
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop() as string;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+      } else if (entry.isFile()) {
+        out.push(full);
+      }
+    }
+  }
+  return out;
+}
+
+function readCodexSessionIdsFromHistoryDelta(historyPath: string, startOffsetBytes: number): string[] {
+  if (!fs.existsSync(historyPath)) return [];
+  const raw = fs.readFileSync(historyPath);
+  if (startOffsetBytes >= raw.length) return [];
+  const delta = raw.subarray(startOffsetBytes).toString('utf8');
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+
+  for (const line of delta.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as Record<string, unknown>;
+      const sessionId = parsed.session_id;
+      if (typeof sessionId === 'string' && sessionId && !seen.has(sessionId)) {
+        seen.add(sessionId);
+        ordered.push(sessionId);
+      }
+    } catch {
+      // ignore malformed JSONL lines
+    }
+  }
+
+  return ordered;
+}
+
+function findCodexTranscriptBySessionId(sessionsDir: string, sessionId: string): string | null {
+  const matches = collectFiles(sessionsDir).filter(
+    (filePath) => filePath.endsWith('.jsonl') && filePath.includes(sessionId),
+  );
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  return matches[0];
+}
+
+function findNewestCodexTranscriptSince(sessionsDir: string, startedAtMs: number): string | null {
+  const matches = collectFiles(sessionsDir)
+    .filter((filePath) => filePath.endsWith('.jsonl'))
+    .map((filePath) => ({ filePath, mtimeMs: fs.statSync(filePath).mtimeMs }))
+    .filter((entry) => entry.mtimeMs >= startedAtMs)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  return matches[0]?.filePath ?? null;
+}
+
+export function resolveCodexSessionTranscript(options: CodexSessionTranscriptOptions): string | null {
+  const { codexHome, historyPath, startOffsetBytes, startedAtMs } = options;
+  const sessionsDir = path.join(codexHome, 'sessions');
+
+  for (const sessionId of readCodexSessionIdsFromHistoryDelta(historyPath, startOffsetBytes).reverse()) {
+    const transcript = findCodexTranscriptBySessionId(sessionsDir, sessionId);
+    if (transcript) return transcript;
+  }
+
+  return findNewestCodexTranscriptSince(sessionsDir, startedAtMs);
 }
 
 export function resolveJsonHookPaths(target: JsonHookTarget): JsonHookPaths {
@@ -260,7 +686,7 @@ export function detectInstalledTools(): ToolDetection[] {
     { name: 'claude-code', configDir: '~/.claude', detected: exists('.claude'), kind: 'json-hook' },
     { name: 'opencode', configDir: '~/.config/opencode', detected: exists('.config', 'opencode'), kind: 'json-hook' },
     { name: 'openclaw', configDir: '~/.openclaw', detected: exists('.openclaw'), kind: 'plugin', notes: 'install via `openclaw plugins install hippo-memory`' },
-    { name: 'codex', configDir: '~/.codex', detected: exists('.codex'), kind: 'markdown-instruction', notes: 'no hook API - patches AGENTS.md in the project' },
+    { name: 'codex', configDir: '~/.codex', detected: exists('.codex'), kind: 'wrapper', notes: 'wraps the detected codex launcher for session-end consolidation' },
     { name: 'cursor', configDir: '~/.cursor', detected: exists('.cursor'), kind: 'markdown-instruction', notes: 'no hook API - patches .cursorrules in the project' },
     { name: 'pi', configDir: '~/.pi', detected: exists('.pi'), kind: 'markdown-instruction', notes: 'no hook API - patches AGENTS.md in the project' },
   ];
