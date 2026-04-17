@@ -6,6 +6,8 @@
  */
 
 import * as http from 'http';
+import * as path from 'path';
+import * as fs from 'fs';
 import { loadAllEntries, listMemoryConflicts } from './store.js';
 import { calculateStrength, resolveConfidence, type MemoryEntry } from './memory.js';
 import { loadConfig } from './config.js';
@@ -196,7 +198,7 @@ function dashboardHTML(data: DashboardData): string {
 </style>
 </head>
 <body>
-<h1>Hippo Dashboard <span>v0.19.1</span></h1>
+<h1>Hippo Dashboard <span>v0.25.0</span></h1>
 <p style="color: var(--muted); margin-bottom: 24px;">Memory health at a glance. Auto-refreshes on page load.</p>
 
 <div class="section">
@@ -348,8 +350,93 @@ renderTable('all', '');
 </html>`;
 }
 
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+};
+
+function jsonResponse(res: http.ServerResponse, data: unknown, status: number = 200): void {
+  const body = JSON.stringify(data);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.end(body);
+}
+
+function serveStaticFile(res: http.ServerResponse, filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  const mime = MIME_TYPES[ext];
+  if (!mime) return false;
+
+  try {
+    const content = fs.readFileSync(filePath);
+    res.writeHead(200, {
+      'Content-Type': mime,
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function serveDashboard(hippoRoot: string, port: number = 3333): void {
-  const server = http.createServer((_req, res) => {
+  const distUiDir = path.resolve(import.meta.dirname, '..', 'dist-ui');
+  const hasDistUi = fs.existsSync(path.join(distUiDir, 'index.html'));
+
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const pathname = url.pathname;
+
+    // --- API routes ---
+    if (pathname.startsWith('/api/')) {
+      const data = buildDashboardData(hippoRoot);
+
+      if (pathname === '/api/memories') return jsonResponse(res, data.memories);
+      if (pathname === '/api/stats') return jsonResponse(res, data.stats);
+      if (pathname === '/api/conflicts') return jsonResponse(res, data.conflicts);
+      if (pathname === '/api/peers') return jsonResponse(res, data.peers);
+      if (pathname === '/api/config') return jsonResponse(res, data.config);
+      if (pathname === '/api/embeddings') {
+        const index = loadEmbeddingIndex(hippoRoot);
+        return jsonResponse(res, index);
+      }
+
+      return jsonResponse(res, { error: 'Not found' }, 404);
+    }
+
+    // --- Static file serving from dist-ui/ ---
+    if (hasDistUi) {
+      // Normalize and prevent path traversal
+      const safePath = path.normalize(pathname).replace(/^(\.\.[/\\])+/, '');
+      const filePath = path.join(distUiDir, safePath);
+
+      // Block traversal outside dist-ui
+      if (!filePath.startsWith(distUiDir)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
+        return;
+      }
+
+      // Try exact file
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        if (serveStaticFile(res, filePath)) return;
+      }
+
+      // SPA fallback: serve index.html for non-file routes
+      const indexPath = path.join(distUiDir, 'index.html');
+      if (serveStaticFile(res, indexPath)) return;
+    }
+
+    // --- Legacy inline HTML fallback ---
     const data = buildDashboardData(hippoRoot);
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(dashboardHTML(data));
@@ -357,6 +444,7 @@ export function serveDashboard(hippoRoot: string, port: number = 3333): void {
 
   server.listen(port, '127.0.0.1', () => {
     console.log(`Hippo Dashboard running at http://localhost:${port}`);
+    if (hasDistUi) console.log(`Serving React UI from ${distUiDir}`);
     console.log('Press Ctrl+C to stop.');
   });
 }

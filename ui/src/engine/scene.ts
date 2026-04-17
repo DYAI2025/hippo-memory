@@ -1,0 +1,448 @@
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import type { Memory, Conflict } from "../types.js";
+import { LAYER_COLORS } from "./types.js";
+
+const SPREAD = 20;
+const LAYER_Y_OFFSET: Record<string, number> = { buffer: 6, episodic: 0, semantic: -6 };
+
+function hexToColor(hex: string): THREE.Color {
+  return new THREE.Color(hex);
+}
+
+interface MemoryNode {
+  id: string;
+  memory: Memory;
+  mesh: THREE.Mesh;
+  basePosition: THREE.Vector3;
+  halo: THREE.Mesh;
+  phase: number;
+  driftSpeed: number;
+}
+
+export class BrainScene {
+  private renderer!: THREE.WebGLRenderer;
+  private scene!: THREE.Scene;
+  private camera!: THREE.PerspectiveCamera;
+  private controls!: OrbitControls;
+  private composer!: EffectComposer;
+  private nodes: MemoryNode[] = [];
+  private tendrils: THREE.Line[] = [];
+  private conflictLines: THREE.Line[] = [];
+  private raycaster = new THREE.Raycaster();
+  private mouse = new THREE.Vector2();
+  private hoveredNode: MemoryNode | null = null;
+  private selectedNode: MemoryNode | null = null;
+  private highlightedIds: Set<string> = new Set();
+  private searchDimmed = false;
+  private clock = new THREE.Clock();
+  private gridHelper!: THREE.Group;
+  private onHoverCb: ((memory: Memory | null, x: number, y: number) => void) | null = null;
+  private onClickCb: ((memory: Memory | null) => void) | null = null;
+  private disposed = false;
+  private rafId = 0;
+
+  constructor(private container: HTMLDivElement) {
+    this.initRenderer();
+    this.initScene();
+    this.initCamera();
+    this.initControls();
+    this.initPostProcessing();
+    this.initGrid();
+    this.animate();
+  }
+
+  private initRenderer(): void {
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.2;
+    this.container.appendChild(this.renderer.domElement);
+    this.renderer.domElement.style.display = "block";
+  }
+
+  private initScene(): void {
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color("#050709");
+    this.scene.fog = new THREE.FogExp2("#050709", 0.012);
+
+    const ambient = new THREE.AmbientLight(0x111122, 0.5);
+    this.scene.add(ambient);
+
+    const point = new THREE.PointLight(0x7c5cff, 0.4, 100);
+    point.position.set(0, 15, 10);
+    this.scene.add(point);
+  }
+
+  private initCamera(): void {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    this.camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 200);
+    this.camera.position.set(0, 8, 28);
+    this.camera.lookAt(0, 0, 0);
+  }
+
+  private initControls(): void {
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.05;
+    this.controls.minDistance = 5;
+    this.controls.maxDistance = 80;
+    this.controls.maxPolarAngle = Math.PI * 0.85;
+    this.controls.autoRotate = true;
+    this.controls.autoRotateSpeed = 0.3;
+  }
+
+  private initPostProcessing(): void {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(w, h),
+      1.2,
+      0.5,
+      0.2,
+    );
+    this.composer.addPass(bloom);
+  }
+
+  private initGrid(): void {
+    this.gridHelper = new THREE.Group();
+
+    const gridMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.03 });
+    const size = 40;
+    const divisions = 20;
+    const step = size / divisions;
+
+    for (let i = -size / 2; i <= size / 2; i += step) {
+      const geoX = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(i, -10, -size / 2),
+        new THREE.Vector3(i, -10, size / 2),
+      ]);
+      this.gridHelper.add(new THREE.Line(geoX, gridMaterial));
+
+      const geoZ = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-size / 2, -10, i),
+        new THREE.Vector3(size / 2, -10, i),
+      ]);
+      this.gridHelper.add(new THREE.Line(geoZ, gridMaterial));
+    }
+
+    this.scene.add(this.gridHelper);
+  }
+
+  setCallbacks(
+    onHover: (memory: Memory | null, x: number, y: number) => void,
+    onClick: (memory: Memory | null) => void,
+  ): void {
+    this.onHoverCb = onHover;
+    this.onClickCb = onClick;
+  }
+
+  populate(
+    memories: Memory[],
+    positions: Record<string, [number, number, number]>,
+    conflicts: Conflict[],
+  ): void {
+    for (const node of this.nodes) {
+      this.scene.remove(node.mesh);
+      this.scene.remove(node.halo);
+      node.mesh.geometry.dispose();
+      node.halo.geometry.dispose();
+    }
+    for (const line of this.tendrils) {
+      this.scene.remove(line);
+      line.geometry.dispose();
+    }
+    for (const line of this.conflictLines) {
+      this.scene.remove(line);
+      line.geometry.dispose();
+    }
+    this.nodes = [];
+    this.tendrils = [];
+    this.conflictLines = [];
+
+    const maxRetrieval = memories.reduce((m, mem) => Math.max(m, mem.retrieval_count), 1);
+
+    for (const mem of memories) {
+      const pos = positions[mem.id] ?? [Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1];
+      const layerY = LAYER_Y_OFFSET[mem.layer] ?? 0;
+
+      const x = pos[0] * SPREAD + (Math.random() - 0.5) * 3;
+      const y = pos[1] * SPREAD * 0.5 + layerY + (Math.random() - 0.5) * 2;
+      const z = pos[2] * SPREAD + (Math.random() - 0.5) * 3;
+
+      const color = hexToColor(LAYER_COLORS[mem.layer]);
+      const logRatio = Math.log2(mem.retrieval_count + 1) / Math.log2(maxRetrieval + 1);
+      const radius = 0.15 + logRatio * 0.35;
+
+      const sphereGeo = new THREE.SphereGeometry(radius, 24, 24);
+      const sphereMat = new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 0.6 + mem.strength * 0.8,
+        roughness: 0.3,
+        metalness: 0.1,
+        transparent: true,
+        opacity: 0.3 + mem.strength * 0.7,
+      });
+      const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+      sphere.position.set(x, y, z);
+      sphere.userData = { memoryId: mem.id };
+      this.scene.add(sphere);
+
+      const haloGeo = new THREE.SphereGeometry(radius * 3, 16, 16);
+      const haloMat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.06 + mem.strength * 0.08,
+        side: THREE.BackSide,
+        depthWrite: false,
+      });
+      const halo = new THREE.Mesh(haloGeo, haloMat);
+      halo.position.copy(sphere.position);
+      this.scene.add(halo);
+
+      this.nodes.push({
+        id: mem.id,
+        memory: mem,
+        mesh: sphere,
+        halo,
+        basePosition: sphere.position.clone(),
+        phase: Math.random() * Math.PI * 2,
+        driftSpeed: 0.2 + Math.random() * 0.3,
+      });
+    }
+
+    this.buildTendrils();
+    this.buildConflictLines(conflicts);
+  }
+
+  private buildTendrils(): void {
+    const n = this.nodes.length;
+    if (n > 500) return;
+
+    const maxDist = 6;
+    const maxDistSq = maxDist * maxDist;
+
+    for (let i = 0; i < n; i++) {
+      const a = this.nodes[i];
+      for (let j = i + 1; j < n; j++) {
+        const b = this.nodes[j];
+        const dx = a.basePosition.x - b.basePosition.x;
+        const dy = a.basePosition.y - b.basePosition.y;
+        const dz = a.basePosition.z - b.basePosition.z;
+        const distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq > maxDistSq) continue;
+
+        const dist = Math.sqrt(distSq);
+        const fade = 1 - dist / maxDist;
+
+        const mid = new THREE.Vector3().lerpVectors(a.basePosition, b.basePosition, 0.5);
+        mid.y += (Math.random() - 0.5) * 1.5;
+
+        const curve = new THREE.QuadraticBezierCurve3(a.basePosition, mid, b.basePosition);
+        const points = curve.getPoints(12);
+        const geo = new THREE.BufferGeometry().setFromPoints(points);
+
+        const colA = hexToColor(a.mesh.userData.color ?? LAYER_COLORS[a.memory.layer]);
+        const colB = hexToColor(b.mesh.userData.color ?? LAYER_COLORS[b.memory.layer]);
+        const mixedColor = colA.clone().lerp(colB, 0.5);
+
+        const mat = new THREE.LineBasicMaterial({
+          color: mixedColor,
+          transparent: true,
+          opacity: fade * fade * 0.15,
+          depthWrite: false,
+        });
+
+        const line = new THREE.Line(geo, mat);
+        this.scene.add(line);
+        this.tendrils.push(line);
+      }
+    }
+  }
+
+  private buildConflictLines(conflicts: Conflict[]): void {
+    const nodeMap = new Map<string, MemoryNode>();
+    for (const node of this.nodes) nodeMap.set(node.id, node);
+
+    for (const c of conflicts) {
+      const a = nodeMap.get(c.memory_a_id);
+      const b = nodeMap.get(c.memory_b_id);
+      if (!a || !b) continue;
+
+      const mid = new THREE.Vector3().lerpVectors(a.basePosition, b.basePosition, 0.5);
+      mid.y += 1;
+
+      const curve = new THREE.QuadraticBezierCurve3(a.basePosition, mid, b.basePosition);
+      const points = curve.getPoints(16);
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineDashedMaterial({
+        color: 0xff4466,
+        transparent: true,
+        opacity: 0.3 + c.score * 0.4,
+        dashSize: 0.3,
+        gapSize: 0.2,
+        depthWrite: false,
+      });
+      const line = new THREE.Line(geo, mat);
+      line.computeLineDistances();
+      this.scene.add(line);
+      this.conflictLines.push(line);
+    }
+  }
+
+  setHighlighted(ids: Set<string>): void {
+    this.highlightedIds = ids;
+    this.searchDimmed = ids.size > 0;
+    this.applyDimming();
+  }
+
+  clearHighlight(): void {
+    this.highlightedIds.clear();
+    this.searchDimmed = false;
+    this.applyDimming();
+  }
+
+  private applyDimming(): void {
+    for (const node of this.nodes) {
+      const mat = node.mesh.material as THREE.MeshStandardMaterial;
+      const haloMat = node.halo.material as THREE.MeshBasicMaterial;
+
+      if (this.searchDimmed && !this.highlightedIds.has(node.id)) {
+        mat.opacity = 0.05;
+        mat.emissiveIntensity = 0.1;
+        haloMat.opacity = 0.01;
+      } else {
+        mat.opacity = 0.3 + node.memory.strength * 0.7;
+        mat.emissiveIntensity = 0.6 + node.memory.strength * 0.8;
+        haloMat.opacity = 0.06 + node.memory.strength * 0.08;
+      }
+    }
+  }
+
+  handleMouseMove(event: MouseEvent): void {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    const meshes = this.nodes.map((n) => n.mesh);
+    const intersects = this.raycaster.intersectObjects(meshes);
+
+    const prevHovered = this.hoveredNode;
+
+    if (intersects.length > 0) {
+      const hit = intersects[0].object;
+      const memId = hit.userData.memoryId as string;
+      this.hoveredNode = this.nodes.find((n) => n.id === memId) ?? null;
+      this.renderer.domElement.style.cursor = "pointer";
+
+      if (this.hoveredNode && this.onHoverCb) {
+        this.onHoverCb(this.hoveredNode.memory, event.clientX, event.clientY);
+      }
+    } else {
+      this.hoveredNode = null;
+      this.renderer.domElement.style.cursor = "grab";
+      if (prevHovered && this.onHoverCb) {
+        this.onHoverCb(null, 0, 0);
+      }
+    }
+
+    if (prevHovered && prevHovered !== this.hoveredNode) {
+      const mat = prevHovered.mesh.material as THREE.MeshStandardMaterial;
+      mat.emissiveIntensity = 0.6 + prevHovered.memory.strength * 0.8;
+      prevHovered.mesh.scale.setScalar(1);
+      (prevHovered.halo.material as THREE.MeshBasicMaterial).opacity =
+        0.06 + prevHovered.memory.strength * 0.08;
+    }
+
+    if (this.hoveredNode) {
+      const mat = this.hoveredNode.mesh.material as THREE.MeshStandardMaterial;
+      mat.emissiveIntensity = 2.0;
+      this.hoveredNode.mesh.scale.setScalar(1.4);
+      (this.hoveredNode.halo.material as THREE.MeshBasicMaterial).opacity = 0.2;
+    }
+  }
+
+  handleClick(): void {
+    if (this.hoveredNode) {
+      if (this.selectedNode && this.selectedNode !== this.hoveredNode) {
+        this.selectedNode.mesh.scale.setScalar(1);
+      }
+      this.selectedNode = this.hoveredNode;
+      if (this.onClickCb) this.onClickCb(this.hoveredNode.memory);
+    } else {
+      if (this.selectedNode) this.selectedNode.mesh.scale.setScalar(1);
+      this.selectedNode = null;
+      if (this.onClickCb) this.onClickCb(null);
+    }
+  }
+
+  deselect(): void {
+    if (this.selectedNode) this.selectedNode.mesh.scale.setScalar(1);
+    this.selectedNode = null;
+    if (this.onClickCb) this.onClickCb(null);
+  }
+
+  resize(width: number, height: number): void {
+    if (width === 0 || height === 0) return;
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(width, height);
+    this.composer.setSize(width, height);
+  }
+
+  private animate = (): void => {
+    if (this.disposed) return;
+    this.rafId = requestAnimationFrame(this.animate);
+
+    const elapsed = this.clock.getElapsedTime();
+    this.controls.update();
+
+    for (const node of this.nodes) {
+      const drift = Math.sin(elapsed * node.driftSpeed + node.phase);
+      const driftY = Math.cos(elapsed * node.driftSpeed * 0.7 + node.phase * 1.3);
+      node.mesh.position.x = node.basePosition.x + drift * 0.15;
+      node.mesh.position.y = node.basePosition.y + driftY * 0.1;
+      node.mesh.position.z = node.basePosition.z + Math.sin(elapsed * node.driftSpeed * 0.5 + node.phase * 0.7) * 0.12;
+      node.halo.position.copy(node.mesh.position);
+
+      if (node === this.selectedNode) {
+        const pulse = 1.3 + 0.1 * Math.sin(elapsed * 3 + node.phase);
+        node.mesh.scale.setScalar(pulse);
+      }
+    }
+
+    this.composer.render();
+  };
+
+  dispose(): void {
+    this.disposed = true;
+    cancelAnimationFrame(this.rafId);
+    this.controls.dispose();
+
+    for (const node of this.nodes) {
+      node.mesh.geometry.dispose();
+      (node.mesh.material as THREE.Material).dispose();
+      node.halo.geometry.dispose();
+      (node.halo.material as THREE.Material).dispose();
+    }
+    for (const line of [...this.tendrils, ...this.conflictLines]) {
+      line.geometry.dispose();
+      (line.material as THREE.Material).dispose();
+    }
+
+    this.renderer.dispose();
+    if (this.renderer.domElement.parentElement) {
+      this.renderer.domElement.parentElement.removeChild(this.renderer.domElement);
+    }
+  }
+}

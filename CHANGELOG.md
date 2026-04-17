@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.25.0 (2026-04-16) — Brain Observatory
+
+### Added
+- **Living Map UI.** `hippo dashboard` now serves an interactive particle visualization of your agent's memory. Memories rendered as glowing particles on a 2D canvas with force-directed layout.
+  - Color by layer (buffer = blue, episodic = amber, semantic = green)
+  - Size by retrieval count, opacity by current strength
+  - PCA projection of 384-dim embeddings to 2D with d3-force clustering
+  - Hover tooltips, click for full detail panel, search filtering with dimming
+  - Red dashed lines between conflicting memories
+  - Subtle breathing animation simulating live decay
+  - Empty state with getting-started prompt
+- **JSON API.** Six endpoints for programmatic access: `/api/memories`, `/api/stats`, `/api/conflicts`, `/api/embeddings`, `/api/peers`, `/api/config`.
+- **Static file serving.** Dashboard serves pre-built React SPA from `dist-ui/` with SPA fallback routing. Legacy inline HTML preserved when UI is not built.
+
+### Changed
+- `prepublishOnly` now runs `build:all` (TypeScript + UI) to include `dist-ui/` in the npm package.
+
 ## 0.24.2 (2026-04-16)
 
 ### Added
