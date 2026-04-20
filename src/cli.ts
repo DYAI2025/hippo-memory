@@ -136,6 +136,7 @@ import {
 } from './importers.js';
 import { cmdCapture, CaptureOptions } from './capture.js';
 import { auditMemories, type AuditResult } from './audit.js';
+import { runEval, bootstrapCorpus, type EvalCase } from './eval.js';
 import { wmPush, wmRead, wmClear, wmFlush, WorkingMemoryItem } from './working-memory.js';
 
 // ---------------------------------------------------------------------------
@@ -803,6 +804,89 @@ async function cmdExplain(
   }
 
   console.log('Note: explain does not mark memories as retrieved (read-only).');
+}
+
+async function cmdEval(
+  hippoRoot: string,
+  corpusPath: string | null,
+  flags: Record<string, string | boolean | string[]>
+): Promise<void> {
+  requireInit(hippoRoot);
+
+  const asJson = Boolean(flags['json']);
+  const minMrr = flags['min-mrr'] !== undefined ? parseFloat(String(flags['min-mrr'])) : null;
+  const noMmr = Boolean(flags['no-mmr']);
+  const mmrLambda = flags['mmr-lambda'] !== undefined ? parseFloat(String(flags['mmr-lambda'])) : undefined;
+  const embeddingWeight = flags['embedding-weight'] !== undefined ? parseFloat(String(flags['embedding-weight'])) : undefined;
+
+  const entries = loadAllEntries(hippoRoot);
+
+  // Bootstrap mode: emit a synthetic corpus and exit.
+  if (flags['bootstrap']) {
+    const outPath = flags['out'] ? String(flags['out']) : null;
+    const max = flags['max-cases'] !== undefined ? parseInt(String(flags['max-cases']), 10) : 50;
+    const corpus = bootstrapCorpus(entries, max);
+    const payload = JSON.stringify({ cases: corpus }, null, 2);
+    if (outPath) {
+      fs.writeFileSync(outPath, payload, 'utf8');
+      console.log(`Wrote ${corpus.length} bootstrap cases to ${outPath}`);
+    } else {
+      console.log(payload);
+    }
+    return;
+  }
+
+  if (!corpusPath) {
+    console.error('Usage: hippo eval <corpus.json>  OR  hippo eval --bootstrap [--out <path>]');
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(corpusPath)) {
+    console.error(`Corpus file not found: ${corpusPath}`);
+    process.exit(1);
+  }
+
+  let cases: EvalCase[];
+  try {
+    const raw = JSON.parse(fs.readFileSync(corpusPath, 'utf8'));
+    cases = Array.isArray(raw) ? raw : raw.cases;
+    if (!Array.isArray(cases)) throw new Error('Corpus JSON must be an array or { cases: [...] }');
+  } catch (err) {
+    console.error(`Failed to read corpus: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+
+  const summary = await runEval(cases, entries, {
+    hippoRoot,
+    mmr: !noMmr,
+    mmrLambda,
+    embeddingWeight,
+  });
+
+  if (asJson) {
+    console.log(JSON.stringify(summary, null, 2));
+  } else {
+    console.log(`Eval: ${summary.cases.length} cases, ${summary.durationMs}ms`);
+    console.log();
+    console.log(`MRR:          ${fmt(summary.meanMrr, 4)}`);
+    console.log(`Recall@5:     ${fmt(summary.meanRecallAt5, 4)}`);
+    console.log(`Recall@10:    ${fmt(summary.meanRecallAt10, 4)}`);
+    console.log(`NDCG@10:      ${fmt(summary.meanNdcgAt10, 4)}`);
+    console.log();
+    const failing = summary.cases.filter((c) => c.mrr === 0);
+    if (failing.length > 0) {
+      console.log(`${failing.length} case(s) returned zero relevant results:`);
+      for (const f of failing.slice(0, 10)) {
+        console.log(`  [${f.case.id}] "${f.case.query.slice(0, 60)}"`);
+      }
+      if (failing.length > 10) console.log(`  ...and ${failing.length - 10} more`);
+    }
+  }
+
+  if (minMrr !== null && summary.meanMrr < minMrr) {
+    console.error(`MRR ${fmt(summary.meanMrr, 4)} below threshold ${minMrr}`);
+    process.exit(1);
+  }
 }
 
 /**
@@ -3252,6 +3336,15 @@ Commands:
     --physics | --classic  Force search mode (default: from config)
     --no-mmr               Disable MMR diversity re-ranking
     --mmr-lambda <f>       MMR balance 0..1 (default: 0.7, 1.0 = pure relevance)
+  eval [<corpus.json>]     Measure recall quality against a test corpus
+    --bootstrap            Generate a synthetic corpus from current memories
+    --out <path>           With --bootstrap, write to file instead of stdout
+    --max-cases <n>        With --bootstrap, cap case count (default: 50)
+    --no-mmr               Disable MMR for this eval run
+    --mmr-lambda <f>       Override MMR lambda for this run
+    --embedding-weight <f> Override cosine weight (default: 0.6)
+    --min-mrr <f>          Exit non-zero if mean MRR falls below this
+    --json                 Output full summary as JSON
   context                  Smart context injection for AI agents
     --auto                 Auto-detect task from git state
     --budget <n>           Token budget (default: 1500)
@@ -3466,6 +3559,12 @@ async function main(): Promise<void> {
         process.exit(1);
       }
       await cmdExplain(hippoRoot, query, flags);
+      break;
+    }
+
+    case 'eval': {
+      const corpusPath = args[0] ? String(args[0]) : null;
+      await cmdEval(hippoRoot, corpusPath, flags);
       break;
     }
 
