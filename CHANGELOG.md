@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.27.0 (2026-04-20) — Recall observability + quality
+
+### Added
+- **`hippo explain <query>`.** Read-only diagnostic that shows the full score breakdown per retrieved memory: BM25 raw + normalized + weight + matched query terms, cosine + weight, base blend, strength/recency/decision/path/source/outcome multipliers, age, and final composite. Does NOT mark memories as retrieved, so it's safe as a debugging tool. `--json` for programmatic consumers.
+- **`hippo trace <id>`.** Single-memory dossier: content, layer/confidence/pinned/tags, age, strength trajectory with 30-day and 90-day projections, effective half-life with reward-factor breakdown, retrieval count + staleness, outcome pos/neg, consolidation parents, and any open conflicts. `--json` supported.
+- **`hippo eval [<corpus.json>]`.** Measure recall quality against a test corpus. Metrics: MRR, Recall@5, Recall@10, NDCG@10. `--bootstrap` generates a synthetic corpus from current memories (useful as a smoke test). `--show-cases` prints per-case details so eval doubles as a debugger. `--min-mrr <f>` gates CI by exiting non-zero when mean MRR drops below threshold. `--no-mmr` / `--mmr-lambda <f>` / `--embedding-weight <f>` to A/B tune.
+- **MMR diversity re-ranking.** After hybrid scoring, iteratively pick the result maximising `lambda * relevance - (1 - lambda) * max(cos(cand, picked))` so near-duplicate memories don't cluster at the top. Default `lambda=0.7`, configurable via `config.mmr.{enabled, lambda}`. Only applies when embeddings are loaded; pure-BM25 mode is unchanged. Config + CLI off-switches available.
+- **Outcome-based retrieval boost.** `hippo outcome --good/--bad` now gives an immediate nudge on the next recall via `1 + 0.15 * tanh((pos - neg) / 2)` clipped to `[0.85, 1.15]`. Distinct from the existing slow reward-factor-via-strength path. `ScoreBreakdown` includes the new field.
+- **Real eval corpus** at `evals/real-corpus.json` with 15 hand-curated cases spanning project rules, dev-environment gotchas, external project references, and architecture notes. `scripts/build-eval-corpus.mjs` regenerates from the live store. Baseline numbers documented in `evals/README.md`.
+
+### Fixed
+- **Misleading `hybrid` mode label.** When the query was embedded but no document had a cached vector, explain output showed `mode: hybrid` even though only BM25 was contributing. Now split: `hybrid` when a cached vector was used, `hybrid-no-vec` with a hint to run `hippo embed` when not. No scoring change — labeling only.
+- **`hippo eval --bootstrap --out <nested/path>.json`** now auto-creates the parent directory instead of failing on ENOENT.
+
+### Internal
+- New `src/eval.ts` exports pure-function metrics (`mrr`, `recallAtK`, `ndcgAtK`), a `runEval` driver, and `bootstrapCorpus`.
+- `SearchResult.breakdown?: ScoreBreakdown` opt-in via `{ explain: true }` on hybridSearch / physicsSearch / searchBothHybrid. Zero-cost when unset.
+- `mmrRerank` helper exported for direct unit testing.
+- 523 tests pass (up from 498). New coverage: breakdown math identity, outcomeBoost bounds, MMR reorder at various lambda values, eval metric math, bootstrap filtering.
+
 ## 0.26.0 (2026-04-20) — Memory quality
 
 ### Added

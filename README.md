@@ -60,6 +60,14 @@ hippo recall "data pipeline issues" --budget 2000
 
 ---
 
+### What's new in v0.27.0
+
+- **Recall is now debuggable.** `hippo explain <query>` prints the full score breakdown for each retrieved memory: BM25 + cosine, every multiplier (strength, recency, decision, path, source-bump, outcome), age, and final composite. Read-only so it's safe to run as a diagnostic.
+- **`hippo trace <id>`** gives a one-page dossier per memory: decay trajectory projected to 30/90 days, effective half-life, retrieval staleness, outcome counts, consolidation parents, open conflicts.
+- **MMR diversity** re-ranks near-duplicate results so you don't get five paraphrases at the top. Default `lambda=0.7`, tunable via config or `--no-mmr` / `--mmr-lambda`.
+- **Outcome feedback is immediate.** `hippo outcome --good` now nudges that memory up on the very next recall (not just via slow half-life decay). Bounded at +/-15%.
+- **`hippo eval`** measures recall quality against a test corpus (MRR, Recall@K, NDCG@K). Gate CI with `--min-mrr`. A real 15-case corpus ships at `evals/real-corpus.json`; baseline numbers in `evals/README.md`.
+
 ### What's new in v0.26.0
 
 - **`hippo audit` catches junk memories.** New command flags too-short entries, release/merge/WIP commit noise, fragments, and vague single-clause notes. `--fix` removes the worst offenders. `hippo sleep` now runs audit automatically so commit-noise never survives consolidation.
