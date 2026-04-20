@@ -345,10 +345,21 @@ export async function hybridSearch(
   // diversity. Only applies when embeddings are loaded (doc-to-doc similarity
   // is via cosine of cached vectors); otherwise we return the pure-relevance
   // ordering unchanged.
+  //
+  // MMR is O(K^2) in cosine similarity ops, which on large corpora (1000+
+  // candidates) dominates query time. Cap the re-ranking window to the top
+  // relevance-scored candidates — anything below top-K was never going to
+  // surface anyway after budget filtering.
+  const MMR_CANDIDATE_CAP = 100;
   const applyMmr = mmrEnabled && useEmbeddings && scored.length > 1 && mmrLambda < 1;
-  const ordered = applyMmr
-    ? mmrRerank(scored, embeddingIndex, mmrLambda, explain)
-    : scored;
+  let ordered: SearchResult[];
+  if (applyMmr) {
+    const head = scored.slice(0, MMR_CANDIDATE_CAP);
+    const tail = scored.slice(MMR_CANDIDATE_CAP);
+    ordered = [...mmrRerank(head, embeddingIndex, mmrLambda, explain), ...tail];
+  } else {
+    ordered = scored;
+  }
 
   // Apply token budget
   const results: SearchResult[] = [];
