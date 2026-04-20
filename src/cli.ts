@@ -136,7 +136,7 @@ import {
 } from './importers.js';
 import { cmdCapture, CaptureOptions } from './capture.js';
 import { auditMemories, type AuditResult } from './audit.js';
-import { runEval, bootstrapCorpus, type EvalCase } from './eval.js';
+import { runEval, bootstrapCorpus, compareSummaries, type EvalCase, type EvalSummary } from './eval.js';
 import { wmPush, wmRead, wmClear, wmFlush, WorkingMemoryItem } from './working-memory.js';
 
 // ---------------------------------------------------------------------------
@@ -574,6 +574,11 @@ async function cmdRecall(
     ? parseFloat(String(flags['mmr-lambda']))
     : config.mmr.lambda;
   const mmrEnabled = !noMmr && config.mmr.enabled;
+  const localBump = flags['equal-sources']
+    ? 1.0
+    : flags['local-bump'] !== undefined
+      ? parseFloat(String(flags['local-bump']))
+      : config.search.localBump;
 
   let results;
   if (usePhysics && !hasGlobal) {
@@ -585,7 +590,7 @@ async function cmdRecall(
   } else if (hasGlobal) {
     // Use searchBothHybrid for merged results with embedding support
     results = await searchBothHybrid(query, hippoRoot, globalRoot, {
-      budget, mmr: mmrEnabled, mmrLambda,
+      budget, mmr: mmrEnabled, mmrLambda, localBump,
     });
   } else {
     results = await hybridSearch(query, localEntries, {
@@ -697,6 +702,11 @@ async function cmdExplain(
     ? parseFloat(String(flags['mmr-lambda']))
     : config.mmr.lambda;
   const mmrEnabled = !noMmr && config.mmr.enabled;
+  const localBump = flags['equal-sources']
+    ? 1.0
+    : flags['local-bump'] !== undefined
+      ? parseFloat(String(flags['local-bump']))
+      : config.search.localBump;
 
   let results;
   let modeUsed: 'physics' | 'searchBothHybrid' | 'hybrid';
@@ -710,7 +720,7 @@ async function cmdExplain(
     modeUsed = 'physics';
   } else if (hasGlobal) {
     results = await searchBothHybrid(query, hippoRoot, globalRoot, {
-      budget, explain: true, mmr: mmrEnabled, mmrLambda,
+      budget, explain: true, mmr: mmrEnabled, mmrLambda, localBump,
     });
     modeUsed = 'searchBothHybrid';
   } else {
@@ -816,6 +826,7 @@ async function cmdEval(
   const asJson = Boolean(flags['json']);
   const minMrr = flags['min-mrr'] !== undefined ? parseFloat(String(flags['min-mrr'])) : null;
   const showCases = Boolean(flags['show-cases']);
+  const comparePath = flags['compare'] ? String(flags['compare']) : null;
   const noMmr = Boolean(flags['no-mmr']);
   const mmrLambda = flags['mmr-lambda'] !== undefined ? parseFloat(String(flags['mmr-lambda'])) : undefined;
   const embeddingWeight = flags['embedding-weight'] !== undefined ? parseFloat(String(flags['embedding-weight'])) : undefined;
@@ -858,11 +869,20 @@ async function cmdEval(
     process.exit(1);
   }
 
+  const globalRoot = getGlobalRoot();
+  const localBump = flags['equal-sources']
+    ? 1.0
+    : flags['local-bump'] !== undefined
+      ? parseFloat(String(flags['local-bump']))
+      : loadConfig(hippoRoot).search.localBump;
+
   const summary = await runEval(cases, entries, {
     hippoRoot,
+    globalRoot,
     mmr: !noMmr,
     mmrLambda,
     embeddingWeight,
+    localBump,
   });
 
   if (asJson) {
@@ -909,6 +929,51 @@ async function cmdEval(
   if (minMrr !== null && summary.meanMrr < minMrr) {
     console.error(`MRR ${fmt(summary.meanMrr, 4)} below threshold ${minMrr}`);
     process.exit(1);
+  }
+
+  if (comparePath) {
+    if (!fs.existsSync(comparePath)) {
+      console.error(`Baseline file not found: ${comparePath}`);
+      process.exit(1);
+    }
+    let baseline: EvalSummary;
+    try {
+      baseline = JSON.parse(fs.readFileSync(comparePath, 'utf8'));
+    } catch (err) {
+      console.error(`Failed to parse baseline: ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    }
+    const cmp = compareSummaries(baseline, summary);
+
+    if (asJson) {
+      // The main JSON output already emitted; append comparison to stderr so
+      // both can be captured independently.
+      console.error(JSON.stringify({ compare: cmp }, null, 2));
+    } else {
+      console.log();
+      console.log('Compare vs baseline:');
+      const sign = (d: number): string => (d >= 0 ? '+' : '') + fmt(d, 4);
+      console.log(`  MRR:        ${sign(cmp.aggregate.mrr)}`);
+      console.log(`  Recall@5:   ${sign(cmp.aggregate.recallAt5)}`);
+      console.log(`  Recall@10:  ${sign(cmp.aggregate.recallAt10)}`);
+      console.log(`  NDCG@10:    ${sign(cmp.aggregate.ndcgAt10)}`);
+      console.log();
+      console.log(`  improved: ${cmp.improved.length}   regressed: ${cmp.regressed.length}   unchanged: ${cmp.unchanged}`);
+      if (cmp.onlyInBaseline.length > 0) console.log(`  only in baseline: ${cmp.onlyInBaseline.length}`);
+      if (cmp.onlyInCurrent.length > 0) console.log(`  only in current:  ${cmp.onlyInCurrent.length}`);
+
+      const showPerCase = cmp.improved.length + cmp.regressed.length > 0;
+      if (showPerCase) {
+        for (const d of cmp.improved.slice(0, 5)) {
+          const delta = d.ndcgAfter - d.ndcgBefore;
+          console.log(`  + [${d.id}] NDCG ${fmt(d.ndcgBefore, 2)} -> ${fmt(d.ndcgAfter, 2)} (+${fmt(delta, 3)})`);
+        }
+        for (const d of cmp.regressed.slice(0, 5)) {
+          const delta = d.ndcgAfter - d.ndcgBefore;
+          console.log(`  - [${d.id}] NDCG ${fmt(d.ndcgBefore, 2)} -> ${fmt(d.ndcgAfter, 2)} (${fmt(delta, 3)})`);
+        }
+      }
+    }
   }
 }
 
@@ -3481,9 +3546,12 @@ Commands:
     --out <path>           With --bootstrap, write to file instead of stdout
     --max-cases <n>        With --bootstrap, cap case count (default: 50)
     --show-cases           Print per-case details (query, R@10, missed, top 3)
+    --compare <path>       JSON from a prior \`eval --json\` run; print deltas
     --no-mmr               Disable MMR for this eval run
     --mmr-lambda <f>       Override MMR lambda for this run
     --embedding-weight <f> Override cosine weight (default: 0.6)
+    --local-bump <f>       Local-over-global priority multiplier (default: 1.2)
+    --equal-sources        Shortcut for --local-bump 1.0
     --min-mrr <f>          Exit non-zero if mean MRR falls below this
     --json                 Output full summary as JSON
   context                  Smart context injection for AI agents

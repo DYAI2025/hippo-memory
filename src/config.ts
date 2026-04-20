@@ -37,6 +37,11 @@ export interface HippoConfig {
      *  a typical balance. */
     lambda: number;
   };
+  search: {
+    /** Multiplier applied to local-store scores when merged with global
+     *  results (searchBothHybrid). 1.0 = no bias, 1.2 = 20% local priority. */
+    localBump: number;
+  };
 }
 
 const DEFAULT_CONFIG: HippoConfig = {
@@ -67,6 +72,9 @@ const DEFAULT_CONFIG: HippoConfig = {
     enabled: true,
     lambda: 0.7,
   },
+  search: {
+    localBump: 1.2,
+  },
 };
 
 export function loadConfig(hippoRoot: string): HippoConfig {
@@ -89,6 +97,7 @@ export function loadConfig(hippoRoot: string): HippoConfig {
       gitLearnPatterns: raw.gitLearnPatterns ?? DEFAULT_CONFIG.gitLearnPatterns,
       physics: mergePhysicsConfig(raw.physics as Partial<PhysicsConfig> | undefined),
       mmr: { ...DEFAULT_CONFIG.mmr, ...(raw.mmr ?? {}) },
+      search: { ...DEFAULT_CONFIG.search, ...(raw.search ?? {}) },
     };
   } catch (err) {
     if (fs.existsSync(configPath)) {

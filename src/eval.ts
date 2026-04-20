@@ -11,6 +11,8 @@
 
 import type { MemoryEntry } from './memory.js';
 import { hybridSearch } from './search.js';
+import { searchBothHybrid } from './shared.js';
+import { isInitialized } from './store.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,6 +59,11 @@ export interface RunEvalOptions {
   /** Max returned results per case. Larger than K-at-10 so metrics stay honest. */
   budget?: number;
   hippoRoot?: string;
+  /** When set and initialized, eval runs through searchBothHybrid so global
+   *  memories are in scope. Otherwise only the `entries` list is searched. */
+  globalRoot?: string;
+  /** Multiplier for local-over-global results when globalRoot is in play. */
+  localBump?: number;
   now?: Date;
 }
 
@@ -121,15 +128,28 @@ export async function runEval(
   const start = Date.now();
   const results: EvalCaseResult[] = [];
 
+  const useBothStores = Boolean(
+    options.globalRoot && options.hippoRoot && isInitialized(options.globalRoot)
+  );
+
   for (const c of cases) {
-    const ranked = await hybridSearch(c.query, entries, {
-      budget,
-      now: options.now,
-      hippoRoot: options.hippoRoot,
-      embeddingWeight: options.embeddingWeight,
-      mmr: options.mmr,
-      mmrLambda: options.mmrLambda,
-    });
+    const ranked = useBothStores
+      ? await searchBothHybrid(c.query, options.hippoRoot!, options.globalRoot!, {
+          budget,
+          now: options.now,
+          embeddingWeight: options.embeddingWeight,
+          mmr: options.mmr,
+          mmrLambda: options.mmrLambda,
+          localBump: options.localBump,
+        })
+      : await hybridSearch(c.query, entries, {
+          budget,
+          now: options.now,
+          hippoRoot: options.hippoRoot,
+          embeddingWeight: options.embeddingWeight,
+          mmr: options.mmr,
+          mmrLambda: options.mmrLambda,
+        });
     const returnedIds = ranked.map((r) => r.entry.id);
     results.push({
       case: c,
@@ -154,6 +174,86 @@ export async function runEval(
     meanRecallAt10,
     meanNdcgAt10,
     durationMs: Date.now() - start,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Compare two eval summaries (baseline vs current)
+// ---------------------------------------------------------------------------
+
+export interface EvalDelta {
+  mrr: number;
+  recallAt5: number;
+  recallAt10: number;
+  ndcgAt10: number;
+}
+
+export interface CaseDelta {
+  id: string;
+  query: string;
+  mrrBefore: number;
+  mrrAfter: number;
+  r10Before: number;
+  r10After: number;
+  ndcgBefore: number;
+  ndcgAfter: number;
+}
+
+export interface EvalComparison {
+  aggregate: EvalDelta;
+  improved: CaseDelta[];
+  regressed: CaseDelta[];
+  unchanged: number;
+  onlyInBaseline: string[];
+  onlyInCurrent: string[];
+}
+
+/**
+ * Compute pairwise deltas between a baseline and a current eval summary.
+ * Cases are matched by EvalCase.id; any mismatch is surfaced in the onlyIn
+ * arrays so the caller knows the corpora diverged.
+ */
+export function compareSummaries(baseline: EvalSummary, current: EvalSummary): EvalComparison {
+  const aggregate: EvalDelta = {
+    mrr: current.meanMrr - baseline.meanMrr,
+    recallAt5: current.meanRecallAt5 - baseline.meanRecallAt5,
+    recallAt10: current.meanRecallAt10 - baseline.meanRecallAt10,
+    ndcgAt10: current.meanNdcgAt10 - baseline.meanNdcgAt10,
+  };
+
+  const baseById = new Map(baseline.cases.map((c) => [c.case.id, c]));
+  const curById = new Map(current.cases.map((c) => [c.case.id, c]));
+
+  const improved: CaseDelta[] = [];
+  const regressed: CaseDelta[] = [];
+  let unchanged = 0;
+
+  for (const [id, cur] of curById) {
+    const base = baseById.get(id);
+    if (!base) continue;
+    const delta: CaseDelta = {
+      id,
+      query: cur.case.query,
+      mrrBefore: base.mrr,
+      mrrAfter: cur.mrr,
+      r10Before: base.recallAt10,
+      r10After: cur.recallAt10,
+      ndcgBefore: base.ndcgAt10,
+      ndcgAfter: cur.ndcgAt10,
+    };
+    const ndcgDelta = delta.ndcgAfter - delta.ndcgBefore;
+    if (ndcgDelta > 1e-6) improved.push(delta);
+    else if (ndcgDelta < -1e-6) regressed.push(delta);
+    else unchanged++;
+  }
+
+  return {
+    aggregate,
+    improved: improved.sort((a, b) => (b.ndcgAfter - b.ndcgBefore) - (a.ndcgAfter - a.ndcgBefore)),
+    regressed: regressed.sort((a, b) => (a.ndcgAfter - a.ndcgBefore) - (b.ndcgAfter - b.ndcgBefore)),
+    unchanged,
+    onlyInBaseline: [...baseById.keys()].filter((id) => !curById.has(id)),
+    onlyInCurrent: [...curById.keys()].filter((id) => !baseById.has(id)),
   };
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { mrr, recallAtK, ndcgAtK, runEval, bootstrapCorpus } from '../src/eval.js';
+import { mrr, recallAtK, ndcgAtK, runEval, bootstrapCorpus, compareSummaries } from '../src/eval.js';
+import type { EvalSummary } from '../src/eval.js';
 import { createMemory } from '../src/memory.js';
 
 // ---------------------------------------------------------------------------
@@ -135,5 +136,85 @@ describe('bootstrapCorpus', () => {
     );
     const corpus = bootstrapCorpus(entries, 3);
     expect(corpus).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compareSummaries — baseline vs current deltas
+// ---------------------------------------------------------------------------
+
+function mockSummary(cases: Array<{ id: string; mrr: number; r10: number; ndcg: number }>): EvalSummary {
+  const converted = cases.map((c) => ({
+    case: { id: c.id, query: 'q', expectedIds: ['x'] },
+    returnedIds: [],
+    mrr: c.mrr,
+    recallAt5: c.r10,
+    recallAt10: c.r10,
+    ndcgAt10: c.ndcg,
+  }));
+  const n = Math.max(1, cases.length);
+  return {
+    cases: converted,
+    meanMrr: cases.reduce((s, c) => s + c.mrr, 0) / n,
+    meanRecallAt5: cases.reduce((s, c) => s + c.r10, 0) / n,
+    meanRecallAt10: cases.reduce((s, c) => s + c.r10, 0) / n,
+    meanNdcgAt10: cases.reduce((s, c) => s + c.ndcg, 0) / n,
+    durationMs: 0,
+  };
+}
+
+describe('compareSummaries', () => {
+  it('computes per-metric aggregate deltas', () => {
+    const base = mockSummary([{ id: 'a', mrr: 0.5, r10: 0.5, ndcg: 0.5 }]);
+    const cur = mockSummary([{ id: 'a', mrr: 1.0, r10: 0.8, ndcg: 0.9 }]);
+    const cmp = compareSummaries(base, cur);
+    expect(cmp.aggregate.mrr).toBeCloseTo(0.5, 6);
+    expect(cmp.aggregate.recallAt10).toBeCloseTo(0.3, 6);
+    expect(cmp.aggregate.ndcgAt10).toBeCloseTo(0.4, 6);
+  });
+
+  it('classifies cases as improved vs regressed by NDCG delta', () => {
+    const base = mockSummary([
+      { id: 'a', mrr: 1, r10: 1, ndcg: 0.5 },
+      { id: 'b', mrr: 1, r10: 1, ndcg: 0.9 },
+      { id: 'c', mrr: 1, r10: 1, ndcg: 0.5 },
+    ]);
+    const cur = mockSummary([
+      { id: 'a', mrr: 1, r10: 1, ndcg: 0.8 },   // improved
+      { id: 'b', mrr: 1, r10: 1, ndcg: 0.6 },   // regressed
+      { id: 'c', mrr: 1, r10: 1, ndcg: 0.5 },   // unchanged
+    ]);
+    const cmp = compareSummaries(base, cur);
+    expect(cmp.improved.map((d) => d.id)).toEqual(['a']);
+    expect(cmp.regressed.map((d) => d.id)).toEqual(['b']);
+    expect(cmp.unchanged).toBe(1);
+  });
+
+  it('surfaces case-id mismatches between corpora', () => {
+    const base = mockSummary([
+      { id: 'a', mrr: 1, r10: 1, ndcg: 1 },
+      { id: 'b', mrr: 1, r10: 1, ndcg: 1 },
+    ]);
+    const cur = mockSummary([
+      { id: 'a', mrr: 1, r10: 1, ndcg: 1 },
+      { id: 'c', mrr: 1, r10: 1, ndcg: 1 },
+    ]);
+    const cmp = compareSummaries(base, cur);
+    expect(cmp.onlyInBaseline).toEqual(['b']);
+    expect(cmp.onlyInCurrent).toEqual(['c']);
+  });
+
+  it('sorts improved cases by largest NDCG uplift first', () => {
+    const base = mockSummary([
+      { id: 'small', mrr: 1, r10: 1, ndcg: 0.5 },
+      { id: 'big',   mrr: 1, r10: 1, ndcg: 0.1 },
+    ]);
+    const cur = mockSummary([
+      { id: 'small', mrr: 1, r10: 1, ndcg: 0.55 },
+      { id: 'big',   mrr: 1, r10: 1, ndcg: 0.9 },
+    ]);
+    const cmp = compareSummaries(base, cur);
+    expect(cmp.improved[0].id).toBe('big');     // +0.8 uplift first
+    expect(cmp.improved[1].id).toBe('small');   // +0.05 uplift second
   });
 });

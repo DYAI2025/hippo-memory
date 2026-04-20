@@ -94,15 +94,15 @@ export function searchBoth(
   const localResults = search(query, localEntries, { budget, now });
   const globalResults = search(query, globalEntries, { budget, now });
 
-  // Tag global results. Local memories get a 1.2x priority bump; mirror that
-  // into the breakdown so `explain` output stays internally consistent.
+  // Tag global results. Local memories get a configurable priority bump.
+  const syncLocalBump = 1.2;
   const tagged: Array<SearchResult & { isGlobal: boolean }> = [
     ...localResults.map((r) => ({
       ...r,
       isGlobal: false,
-      score: r.score * 1.2,
+      score: r.score * syncLocalBump,
       breakdown: r.breakdown
-        ? { ...r.breakdown, sourceBump: 1.2, final: r.breakdown.final * 1.2 }
+        ? { ...r.breakdown, sourceBump: syncLocalBump, final: r.breakdown.final * syncLocalBump }
         : undefined,
     })),
     ...globalResults.map((r) => ({ ...r, isGlobal: true })),
@@ -138,6 +138,9 @@ export interface HybridSearchOptions extends SearchOptions {
   explain?: boolean;
   mmr?: boolean;
   mmrLambda?: number;
+  /** Multiplier applied to local-store scores when merging with global.
+   *  Defaults to 1.2. Use 1.0 to remove the local bias for eval comparisons. */
+  localBump?: number;
 }
 
 /**
@@ -150,7 +153,7 @@ export async function searchBothHybrid(
   globalRoot: string,
   options: HybridSearchOptions = {}
 ): Promise<SearchResult[]> {
-  const { budget = 4000, now = new Date(), embeddingWeight, explain, mmr, mmrLambda } = options;
+  const { budget = 4000, now = new Date(), embeddingWeight, explain, mmr, mmrLambda, localBump = 1.2 } = options;
 
   const localEntries = fs.existsSync(localRoot) ? loadSearchEntries(localRoot, query) : [];
   const globalEntries = fs.existsSync(globalRoot) ? loadSearchEntries(globalRoot, query) : [];
@@ -164,15 +167,14 @@ export async function searchBothHybrid(
     budget, now, hippoRoot: globalRoot, embeddingWeight, explain, mmr, mmrLambda,
   });
 
-  // Tag global results. Local memories get a 1.2x priority bump; mirror that
-  // into the breakdown so `explain` output stays internally consistent.
+  // Tag global results. Local memories get a configurable priority bump.
   const tagged: Array<SearchResult & { isGlobal: boolean }> = [
     ...localResults.map((r) => ({
       ...r,
       isGlobal: false,
-      score: r.score * 1.2,
+      score: r.score * localBump,
       breakdown: r.breakdown
-        ? { ...r.breakdown, sourceBump: 1.2, final: r.breakdown.final * 1.2 }
+        ? { ...r.breakdown, sourceBump: localBump, final: r.breakdown.final * localBump }
         : undefined,
     })),
     ...globalResults.map((r) => ({ ...r, isGlobal: true })),

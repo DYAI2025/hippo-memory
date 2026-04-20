@@ -25,13 +25,26 @@ longer contains a matching memory the case will be silently dropped (with a
 
 ### Baseline results (2026-04-20, store ~1088 memories, embeddings fully populated)
 
+Eval now routes through `searchBothHybrid` so global memories are in scope
+(previously only local entries were searched, which capped recall on any
+case with `g_` expected IDs).
+
 | Config | MRR | Recall@5 | Recall@10 | NDCG@10 |
 |---|---|---|---|---|
-| default (MMR lambda=0.7) | 1.000 | 0.632 | 0.632 | 0.713 |
-| --no-mmr | 1.000 | 0.632 | 0.632 | 0.713 |
-| --mmr-lambda 0.3 | 1.000 | 0.560 | 0.571 | 0.649 |
-| --mmr-lambda 0.5 | 1.000 | 0.587 | 0.632 | 0.693 |
-| --mmr-lambda 0.9 | 1.000 | 0.632 | 0.632 | 0.713 |
+| default (lambda=0.7, localBump=1.2) | 0.967 | 0.622 | 0.682 | 0.731 |
+| --equal-sources (localBump=1.0) | 0.967 | 0.632 | 0.682 | **0.735** |
+| --no-mmr | 0.967 | 0.622 | 0.682 | 0.731 |
+| --mmr-lambda 0.3 | 0.967 | ~0.56 | ~0.57 | ~0.65 |
+| --mmr-lambda 0.9 | 0.967 | 0.622 | 0.682 | 0.731 |
+
+**`--equal-sources` wins by +0.004 NDCG@10.** The full gain lands on
+`powershell-chaining` (NDCG 0.63 -> 0.69) — with the 1.2x local bump,
+the one local `mem_102793a1dfbb` dominated the six global paraphrases.
+Removing the bump lets more paraphrases into top-10.
+
+Default stays at 1.2x for now because the general case (local has fresher
+project context) still benefits, but `--local-bump <f>` / `--equal-sources`
+are available as tuning knobs.
 
 **MRR = 1.0** across all configs: the first relevant hit is always ranked 1.
 
@@ -55,6 +68,31 @@ and produced Recall@10 = 0.48. After hand-pruning false-positive expected
 IDs (session summaries that mention the keyword in passing but aren't the
 canonical answer) Recall@10 jumped to 0.63. **Your corpus is your eval:
 noisy expected lists produce noisy numbers.**
+
+### LLM-generated corpus (`llm-corpus.json`)
+
+Harder-than-bootstrap cases with **paraphrased** queries — the right memory
+is not BM25-obvious, so this is where embeddings and MMR should earn their
+keep. Generated via Claude:
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+node scripts/build-eval-corpus-llm.mjs --max 20 --out evals/llm-corpus.json
+```
+
+For each of `--max` random memories, Claude produces 3 realistic queries
+that a developer might type where THAT memory is the ideal answer,
+without reusing the memory's exact wording. Result: up to `3 * --max`
+cases with 1 expected ID each.
+
+Rate-limited at ~1 req/s. Skip memories that fail with `FAILED - <reason>`.
+
+Compare against the keyword corpus to see which effects move:
+
+```bash
+hippo eval evals/llm-corpus.json --json > llm-baseline.json
+hippo eval evals/llm-corpus.json --equal-sources --compare llm-baseline.json
+```
 
 ## Writing new cases
 
