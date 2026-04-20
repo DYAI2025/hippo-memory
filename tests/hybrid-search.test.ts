@@ -171,6 +171,9 @@ describe('hybridSearch explain breakdown', () => {
     const b = results[0].breakdown;
     expect(b).toBeDefined();
     if (!b) return;
+    // In a test env without @xenova/transformers the embedding path is off
+    // and the mode falls through to bm25-only. The hybrid-no-vec case needs
+    // a mocked embedding pipeline and is verified via live dogfooding.
     expect(b.mode).toBe('bm25-only');
     expect(b.matchedTerms).toEqual(expect.arrayContaining(['fred', 'cache']));
     expect(b.strengthMultiplier).toBeGreaterThanOrEqual(0.5);

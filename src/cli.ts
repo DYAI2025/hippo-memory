@@ -784,7 +784,7 @@ async function cmdExplain(
       console.log(`    final:     ${fmt(b.final, 4)}  (post-amp, from physics scorer)`);
     } else {
       const matched = b.matchedTerms.length > 0 ? b.matchedTerms.join(', ') : '(none)';
-      console.log(`    mode:      ${b.mode}`);
+      console.log(`    mode:      ${b.mode}${b.mode === 'hybrid-no-vec' ? '  (no cached doc vector — run `hippo embed`)' : ''}`);
       console.log(`    BM25:      raw=${fmt(r.bm25, 3)}  normalized=${fmt(b.normBm25, 3)}  weight=${fmt(b.bm25Weight, 2)}  matched=[${matched}]`);
       console.log(`    embedding: cosine=${fmt(b.cosine, 3)}  weight=${fmt(b.embeddingWeight, 2)}`);
       console.log(`    base:      ${fmt(b.bm25Weight, 2)}*${fmt(b.normBm25, 3)} + ${fmt(b.embeddingWeight, 2)}*${fmt(b.cosine, 3)} = ${fmt(b.base, 4)}`);

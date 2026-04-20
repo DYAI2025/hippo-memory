@@ -127,7 +127,15 @@ export interface SearchResult {
 }
 
 export interface ScoreBreakdown {
-  mode: 'hybrid' | 'bm25-only' | 'physics';
+  /**
+   * - `hybrid`: BM25 blended with a non-zero cosine from a cached doc vector.
+   * - `hybrid-no-vec`: Query was embedded but this doc had no cached vector,
+   *   so the effective score came from BM25 alone even though weights say
+   *   otherwise. Usually means `hippo embed` hasn't run on this memory.
+   * - `bm25-only`: Embedding pipeline unavailable or the model requires re-index.
+   * - `physics`: Scored by the physics engine (gravity + momentum + cluster).
+   */
+  mode: 'hybrid' | 'hybrid-no-vec' | 'bm25-only' | 'physics';
   /** BM25 score after normalization by max-in-corpus (0..1). */
   normBm25: number;
   /** Weight applied to BM25 in the hybrid blend. */
@@ -247,17 +255,22 @@ export async function hybridSearch(
     let compositeScore: number;
     let cosineScore = 0;
     let base: number;
-    let modeLabel: 'hybrid' | 'bm25-only';
+    let modeLabel: 'hybrid' | 'hybrid-no-vec' | 'bm25-only';
+    let hadCachedVec = false;
 
     if (useEmbeddings) {
       const cached = embeddingIndex[entries[i].id];
-      cosineScore = cached && queryVector.length > 0
+      hadCachedVec = Boolean(cached && queryVector.length > 0);
+      cosineScore = hadCachedVec
         ? Math.max(0, cosineSimilarity(queryVector, cached))
         : 0;
 
       base = bm25Weight * normBm25 + embeddingWeight * cosineScore;
       compositeScore = base * strengthMultiplier * recencyMultiplier;
-      modeLabel = 'hybrid';
+      // Distinguish "real hybrid" from "query embedded but doc has no cached
+      // vector" so explain can tell users their index is stale without lying
+      // that the search actually used embeddings.
+      modeLabel = hadCachedVec ? 'hybrid' : 'hybrid-no-vec';
     } else {
       // Pure BM25 path: identical to original behavior
       base = queryTerms.length > 0 ? rawBm25 / queryTerms.length : rawBm25;
