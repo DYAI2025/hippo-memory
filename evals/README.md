@@ -100,47 +100,75 @@ de-cluster, so lambda=1.0 (relevance only) ties lambda=0.5 exactly.
 Users who want the uplift today: `hippo recall <q> --embedding-weight 0.4`
 or set `"embeddings": {"hybridWeight": 0.4}` in `.hippo/config.json`.
 
-### LongMemEval status (2026-04-20)
+### LongMemEval results (2026-04-20, full 500 questions)
 
-Attempted a v0.27 run against the 500-question LongMemEval corpus
-(`benchmarks/longmemeval/`) to compare with the documented v0.11 baseline
-(R@1=50.4%, R@3=66.6%, R@5=74.0%, R@10=82.6%, BM25-only). Ran 94 questions
-before stopping; partial results are informative enough to halt.
+Ran v0.27 (hybrid BM25+cosine + MMR + outcome boost) against the full
+LongMemEval 500-question benchmark for direct comparison with the
+documented v0.11 baseline (BM25-only).
+
+| Metric | v0.27 hybrid | v0.11 BM25 baseline | delta |
+|---|---|---|---|
+| Recall@1 | 46.6% | 50.4% | -3.8 pp |
+| Recall@3 | 46.6% | 66.6% | -20.0 pp |
+| Recall@5 | 46.8% | 74.0% | -27.2 pp |
+| Recall@10 | 46.8% | 82.6% | -35.8 pp |
+| answer_in_content@5 | 35.0% | 46.6% | -11.6 pp |
+
+**v0.27 is meaningfully worse than v0.11 on this benchmark.** Honest result,
+worth investigating.
+
+Per-type breakdown:
+
+| Type | v0.27 R@1 | v0.11 R@1 |
+|---|---|---|
+| single-session-assistant | 94.6% | 87.5% |
+| knowledge-update | 52.6% | 70.5% |
+| temporal-reasoning | 42.1% | (not in v0.11 snapshot comparable form) |
+| multi-session | 40.6% | 41.4% |
+| single-session-user | 34.3% | (n/a) |
+| single-session-preference | 16.7% | 13.3% |
+
+**Root cause: the flat R@K curve (46.6 -> 46.8 -> 46.8) means only ~1
+result per query is returned.** v0.27 averages 5.7 retrieved per query
+(range 1-12); v0.11 averaged 8.3 per query (always 10). The evaluator
+checks if any top-K memory came from the answer-session; if we return
+fewer memories, more chances to miss.
+
+Three specific contributors:
+- **Budget saturation.** LongMemEval memories average 14k chars (~3500
+  tokens). Default budget=4000 fits ~1 memory, so the "always include
+  first result" path dominates.
+- **Scoring differences.** Hybrid BM25+cosine pushes different memories
+  to rank 1 than pure BM25. On this benchmark, some of those picks are
+  wrong.
+- **MMR diversity penalty.** At lambda=0.7, MMR demotes memories similar
+  to the #1 pick. Where the answer spans multiple sessions (multi-session
+  questions), this actively hurts.
+
+**What this means for production.** The real corpus eval (15 curated
+queries, normal-sized memories) showed v0.27 near its ceiling at NDCG@10
+0.73. LongMemEval exposes a regime hippo wasn't designed for: one
+massive memory per conversation with no internal chunking. Hippo's
+assumption is that memories are short, atomic notes. Applied to
+multi-kilochar chat histories, the scoring that works on notes underperforms
+keyword matching.
 
 **Perf fixes landed while investigating:**
 
-1. **MMR was O(N^2)** on scored candidates (~50s/query on 1064 docs).
-   Capped to top-100 head (commit 014487f). Dropped to ~9s/query.
-2. **`buildCorpus` tokenized ~15MB/query.** Added `preparedCorpus` option
-   on `hybridSearch` (commit c9bf1a8). One-time 400ms corpus build +
-   ~6-7s/query. Helps any caller running many queries against the same
-   entry set (benchmarks, eval harnesses, batch jobs).
+1. **MMR capped at top-100** (commit 014487f) — was O(N^2) on large
+   candidate sets. Dropped per-query time from ~50s to ~9s.
+2. **`preparedCorpus` option on hybridSearch** (commit c9bf1a8) — lets
+   batch callers skip per-query tokenization. Further drop to ~6-7s/query.
 
-**Partial v0.27 numbers (94 questions, hybrid + MMR + embeddings):**
+Both are production wins independent of the benchmark result.
 
-| Metric | v0.27 (94q) | v0.11 baseline (500q) |
-|---|---|---|
-| Recall@1 | 47.9% | 50.4% |
-| Recall@5 | 47.9% | 74.0% |
-| Recall@10 | 47.9% | 82.6% |
+**Follow-up experiments worth running:**
 
-**The flat 47.9% across K is the real story.** When v0.27 retrieves a
-relevant session, it always ranks it #1. When it misses, it misses
-entirely — the correct session doesn't appear in the top 10 at all.
-
-Likely cause: LongMemEval memories average 14k chars (~3500 tokens each).
-With default budget=4000, hybridSearch returns only 1-2 memories per query,
-so R@K = R@1 for K >= 2. Increasing budget to fit 10+ memories should
-unlock the R@K progression.
-
-**Not publishing a headline number.** The v0.11 baseline used the same
-store with BM25-only and got 74% R@5. A fair v0.27 comparison needs:
-- Budget raised so the top-10 actually contains 10 memories
-- All 500 questions (not just the first 94, which skew to two question types)
-- Separate runs for BM25-only vs hybrid so the embedding contribution is isolable
-
-The infrastructure (corpus + retrieve_inprocess.mjs + perf fixes) is in
-place to do this properly in a follow-up session.
+- Re-run with budget=40_000 (enough for 10 memories) to see if v0.27 just
+  needs more slots.
+- Run v0.27 with --no-mmr to isolate whether MMR is the regression.
+- Test on a LongMemEval variant with chunked memories (one memory per
+  conversation turn, not per session).
 
 ### LLM-generated corpus (`llm-corpus.json`)
 
